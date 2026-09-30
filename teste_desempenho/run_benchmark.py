@@ -183,21 +183,59 @@ def row_from_run_info(name, run_info_path, status_suffix=""):
         info = json.load(f)
     row = {"config": name, "status": info.get("status", "?") + status_suffix}
     row.update({col: _get(info, path) for col, path in COLUMNS})
+    row["cpu_maquina"] = _get(info, ("system", "cpu"))
+    row.update(per_person_columns(info, Path(run_info_path).parent / "landmarks.csv"))
     # Observação: motivo da falha e/ou nota da config (ex.: "rodado em INT8")
     row["observacao"] = " | ".join(t for t in (info.get("error"), info.get("note")) if t) or None
     return row
 
 
+def per_person_columns(info, landmarks_csv):
+    """
+    Métricas equivalentes entre testes. O RTMPose roda uma vez por pessoa
+    detectada, então pose_ms cresce com o número de pessoas no frame; aqui o
+    tempo de pose é dividido pelo total de pessoas (lido do landmarks.csv, que
+    tem uma linha por pessoa e por frame), com o mesmo aquecimento descartado.
+    """
+    pose = _get(info, ("performance", "inference_ms", "pose")) or {}
+    warmup = _get(info, ("performance", "warmup_frames_excluded")) or 0
+    # run_info.json antigos não têm pose.frames: vem de frames_processed - aquecimento
+    frames = pose.get("frames") or ((_get(info, ("video", "frames_processed")) or 0) - warmup)
+    if not pose.get("mean") or frames <= 0 or not landmarks_csv.exists():
+        return {}
+    with open(landmarks_csv, encoding="utf-8", newline="") as f:
+        reader = csv.reader(f, delimiter=";")
+        frame_col = next(reader).index("frame")
+        people = sum(1 for r in reader if int(r[frame_col]) >= warmup)
+    if people == 0:
+        return {}
+    people_per_frame = people / frames
+    pose_per_person = pose["mean"] / people_per_frame
+    one_person = _get(info, ("performance", "inference_ms", "detector", "mean"))
+    one_person = one_person + pose_per_person if one_person is not None else None
+    return {
+        "pessoas_por_frame": round(people_per_frame, 2),
+        "pose_ms_por_pessoa": round(pose_per_person, 2),
+        "inferencia_1_pessoa_ms": round(one_person, 2) if one_person is not None else None,
+        "fps_1_pessoa": round(1000 / one_person, 2) if one_person else None,
+    }
+
+
 def previous_row(name):
     """Resultado de uma execução anterior (para o comparativo não perder dispositivos)."""
     try:
-        cfg = load_config(CONFIGS_DIR / f"{name}.yaml", base_dir=PROJECT_ROOT)
+        run_info = load_config(CONFIGS_DIR / f"{name}.yaml", base_dir=PROJECT_ROOT).pose.output.run_info
     except ConfigError:
+        # Config inválida nesta máquina (ex.: modelo INT8 do x_npu não gerado aqui):
+        # o resultado salvo em outra máquina continua valendo
+        run_info = RESULTS_DIR / name / "run_info.json"
+    if not run_info.exists():
         return None
-    if not cfg.pose.output.run_info.exists():
-        return None
-    return row_from_run_info(name, cfg.pose.output.run_info, " (execução anterior)")
+    return row_from_run_info(name, run_info, " (execução anterior)")
 
+
+PER_PERSON_COLUMNS = ["pessoas_por_frame", "pose_ms_por_pessoa", "inferencia_1_pessoa_ms",
+                      "fps_1_pessoa"]
 
 PRECISION_COLUMNS = ["pessoas_pareadas_pct", "erro_medio_px", "nme_pct", "pck_5pct",
                      "delta_confianca", "eventos"]
@@ -213,7 +251,8 @@ def add_precision(rows):
 def write_reports(rows):
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     add_precision(rows)
-    fields = ["config", "status"] + [c for c, _ in COLUMNS] + PRECISION_COLUMNS
+    fields = (["config", "status", "cpu_maquina"] + [c for c, _ in COLUMNS]
+              + PER_PERSON_COLUMNS + PRECISION_COLUMNS)
 
     csv_path = RESULTS_DIR / "comparativo.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -221,9 +260,10 @@ def write_reports(rows):
         writer.writeheader()
         writer.writerows(rows)
 
-    md_fields = ["config", "status", "modelo_pose", "execucao", "precisao_det", "precisao_pose",
-                 "carga_modelos_s", "detector_ms",
+    md_fields = ["config", "status", "modelo_pose", "execucao", "cpu_maquina", "precisao_det",
+                 "precisao_pose", "carga_modelos_s", "detector_ms",
                  "pose_ms", "inferencia_ms", "inferencia_p95_ms", "fps_inferencia", "fps_pipeline",
+                 "pessoas_por_frame", "pose_ms_por_pessoa", "inferencia_1_pessoa_ms", "fps_1_pessoa",
                  "taxa_deteccao_pct", "confianca_media", "nme_pct", "pck_5pct", "eventos",
                  "observacao"]
     fmt = lambda v: "" if v is None else str(v).replace("|", "/")  # noqa: E731
@@ -234,6 +274,12 @@ def write_reports(rows):
         f"Precisão (nme_pct, pck_5pct, eventos): concordância com a referência FP32 `{REFERENCE}`; "
         "nme_pct = erro médio em % do tamanho da pessoa (menor = melhor), "
         "pck_5pct = % de keypoints a menos de 5% do tamanho da pessoa (maior = melhor).",
+        "",
+        "Métricas equivalentes entre testes: o RTMPose roda uma vez por pessoa detectada, então "
+        "pose_ms depende de quantas pessoas há no frame. pose_ms_por_pessoa = pose_ms / "
+        "pessoas_por_frame; inferencia_1_pessoa_ms = detector_ms + pose_ms_por_pessoa "
+        "(estimativa para um frame com uma pessoa) e fps_1_pessoa = 1000 / inferencia_1_pessoa_ms. "
+        "cpu_maquina identifica a máquina de cada teste.",
         "",
         "| " + " | ".join(md_fields) + " |",
         "|" + "---|" * len(md_fields),

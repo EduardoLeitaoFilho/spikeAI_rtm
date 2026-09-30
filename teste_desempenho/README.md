@@ -22,6 +22,14 @@ colunas `precisao_det` e `precisao_pose` do comparativo. Parte do ganho da
 GPU Intel e da NPU vem de rodarem em FP16. Para saber se isso afetou o resultado,
 compare a coluna `confianca_media` com a da CPU (FP32).
 
+**Métricas por pessoa:** o RTMPose roda uma vez para cada pessoa detectada (no
+vídeo de teste são ~28 por frame), então `pose_ms` é a soma de todas elas. Para
+comparar testes com números diferentes de pessoas, o comparativo traz
+`pessoas_por_frame` (contada no `landmarks.csv`), `pose_ms_por_pessoa`, e uma
+estimativa para um frame com uma pessoa: `inferencia_1_pessoa_ms` (detector +
+uma pose) e `fps_1_pessoa`. A coluna `cpu_maquina` indica em qual máquina cada
+teste rodou.
+
 **Modo híbrido:** no YAML, `pose.detector.runtime` é opcional. Sem ele, o
 detector usa o mesmo dispositivo da pose. Com ele, cada modelo roda num
 dispositivo diferente (veja `configs/hibrido_x_npu_gpu.yaml`).

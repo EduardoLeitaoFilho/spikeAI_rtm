@@ -1,0 +1,118 @@
+{
+  "started_at": "2026-09-30T18:49:33-03:00",
+  "config_file": "C:\\Users\\Hyago\\Desktop\\dudu\\teste_desempenho\\configs\\m_gpu_cuda.yaml",
+  "note": null,
+  "system": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.10",
+    "cpu": "AMD Ryzen 7 5700X 8-Core Processor",
+    "cpu_logical_cores": 16,
+    "libraries": {
+      "rtmlib": "0.0.16",
+      "onnxruntime-gpu": "1.30.0",
+      "opencv-python": "5.0.0.93",
+      "numpy": "2.5.3"
+    }
+  },
+  "runtime": {
+    "label": "onnxruntime/cuda",
+    "device_name": "NVIDIA GeForce RTX 4060 (driver 617.14)",
+    "hybrid": false,
+    "detector": {
+      "backend": "onnxruntime",
+      "device": "cuda",
+      "device_name": "NVIDIA GeForce RTX 4060 (driver 617.14)",
+      "precision": "FP32",
+      "active_providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    },
+    "pose": {
+      "backend": "onnxruntime",
+      "device": "cuda",
+      "device_name": "NVIDIA GeForce RTX 4060 (driver 617.14)",
+      "precision": "FP32",
+      "active_providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    }
+  },
+  "models": {
+    "pose": {
+      "name": "rtmpose_m",
+      "checkpoint": "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-m_simcc-body7_pt-body7_420e-256x192-e48f03d0_20230504.zip",
+      "input_size": [
+        192,
+        256
+      ]
+    },
+    "detector": {
+      "name": "yolox_x",
+      "checkpoint": "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_x_8xb8-300e_humanart-a39d44ed.zip",
+      "input_size": [
+        640,
+        640
+      ]
+    }
+  },
+  "confidence_thresholds": {
+    "valid": 0.7,
+    "uncertain": 0.4
+  },
+  "status": "completed",
+  "video": {
+    "source": "C:\\Users\\Hyago\\Desktop\\dudu\\input\\video.mp4",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30.0,
+    "frames_processed": 211,
+    "duration_s": 7.0
+  },
+  "detection": {
+    "frames_with_person": 211,
+    "frames_without_person": 0,
+    "detection_rate_pct": 100.0,
+    "mean_keypoint_confidence": 0.6088
+  },
+  "performance": {
+    "model_load_s": 1.219,
+    "processing_wall_s": 43.932,
+    "pipeline_fps": 4.8,
+    "warmup_frames_excluded": 5,
+    "inference_ms": {
+      "detector": {
+        "frames": 206,
+        "warmup_ignored": true,
+        "mean": 55.1,
+        "median": 54.41,
+        "p95": 59.26,
+        "min": 52.42,
+        "max": 67.07,
+        "warmup_mean": 138.83
+      },
+      "pose": {
+        "frames": 206,
+        "warmup_ignored": true,
+        "mean": 141.5,
+        "median": 138.45,
+        "p95": 185.1,
+        "min": 98.63,
+        "max": 208.67,
+        "warmup_mean": 169.42
+      },
+      "total": {
+        "frames": 206,
+        "warmup_ignored": true,
+        "mean": 196.6,
+        "median": 193.49,
+        "p95": 239.47,
+        "min": 151.63,
+        "max": 262.48,
+        "warmup_mean": 308.25
+      }
+    },
+    "inference_fps": 5.09
+  }
+}
