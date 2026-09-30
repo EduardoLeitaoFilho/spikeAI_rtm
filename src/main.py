@@ -14,6 +14,9 @@ ONNX automaticamente na primeira execução (fica em cache local depois).
 import os
 import csv
 import time
+import json
+from pathlib import Path
+
 import cv2
 import numpy as np
 from rtmlib import Body
@@ -23,11 +26,13 @@ from rtmlib import Body
 # CONFIG
 # ============================================================
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 # Fonte do vídeo: 0 para webcam, ou caminho de um arquivo .mp4
-VIDEO_SOURCE = "../input/video.mp4"
+VIDEO_SOURCE = str(PROJECT_ROOT / "input" / "video.mp4")
 
 # Diretório e nomes de saída
-OUTPUT_DIR = "../output"
+OUTPUT_DIR = str(PROJECT_ROOT / "output")
 OUTPUT_CSV_NAME = "landmarks.csv"
 OUTPUT_VIDEO_NAME = "annotated.mp4"
 
@@ -159,6 +164,117 @@ class CSVExporter:
 
 
 # ============================================================
+# EVENTOS AMBIGUOS (teste a partir do CSV)
+# ============================================================
+
+def load_landmarks_from_csv(csv_path: str):
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f, delimiter=";")
+        return list(reader)
+
+
+def get_person_tracks(rows):
+    tracks = {}
+    for row in rows:
+        person_id = int(row["person_id"])
+        frame = int(row["frame"])
+        tracks.setdefault(person_id, []).append((frame, row))
+    return tracks
+
+
+def ankle_midpoint_y(row):
+    left_y = float(row.get("left_ankle_y", 0))
+    right_y = float(row.get("right_ankle_y", 0))
+    return (left_y + right_y) / 2.0
+
+
+def build_event(event_name: str, frame_idx: int, uncertainty: int = 0):
+    return {
+        "event": event_name,
+        "frame": int(frame_idx),
+        "uncertainty": int(uncertainty),
+    }
+
+
+def detect_takeoff_ambiguous(rows):
+    """Heurística simples para teste do formato: frame de maior elevação dos tornozelos."""
+    if not rows:
+        return []
+
+    tracks = get_person_tracks(rows)
+    if not tracks:
+        return []
+
+    person_id = max(tracks.keys(), key=lambda pid: len(tracks[pid]))
+    ordered = sorted(tracks[person_id], key=lambda x: x[0])
+
+    frames = []
+    heights = []
+
+    for frame, row in ordered:
+        frames.append(frame)
+        heights.append(ankle_midpoint_y(row))
+
+    if len(heights) < 5:
+        return []
+
+    min_idx = min(range(len(heights)), key=lambda i: heights[i])
+    start = max(0, min_idx - 2)
+    end = min(len(heights), min_idx + 3)
+    candidate = min(range(start, end), key=lambda i: heights[i])
+
+    return [build_event("take_off", frames[candidate], 2)]
+
+
+def detect_landing_ambiguous(rows):
+    """Heurística simples para teste do formato: frame de maior altura antes da queda."""
+    if not rows:
+        return []
+
+    tracks = get_person_tracks(rows)
+    if not tracks:
+        return []
+
+    person_id = max(tracks.keys(), key=lambda pid: len(tracks[pid]))
+    ordered = sorted(tracks[person_id], key=lambda x: x[0])
+
+    frames = []
+    heights = []
+
+    for frame, row in ordered:
+        frames.append(frame)
+        heights.append(ankle_midpoint_y(row))
+
+    if len(heights) < 5:
+        return []
+
+    max_idx = max(range(len(heights)), key=lambda i: heights[i])
+    start = max(0, max_idx - 2)
+    end = min(len(heights), max_idx + 3)
+    candidate = max(range(start, end), key=lambda i: heights[i])
+
+    return [build_event("landing", frames[candidate], 2)]
+
+
+def generate_ambiguous_events_from_csv(csv_path: str, json_output: str):
+    rows = load_landmarks_from_csv(csv_path)
+    if not rows:
+        raise ValueError(f"CSV vazio: {csv_path}")
+
+    events = []
+    events.extend(detect_takeoff_ambiguous(rows))
+    events.extend(detect_landing_ambiguous(rows))
+
+    os.makedirs(os.path.dirname(json_output), exist_ok=True)
+    with open(json_output, "w", encoding="utf-8") as f:
+        json.dump(events, f, ensure_ascii=False, indent=2)
+
+    print(f"Eventos ambíguos salvos em: {json_output}")
+    print(json.dumps(events, ensure_ascii=False, indent=2))
+    return events
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
@@ -223,6 +339,13 @@ def main():
             writer.release()
         cv2.destroyAllWindows()
         exporter.save()
+
+        csv_path = os.path.join(OUTPUT_DIR, OUTPUT_CSV_NAME)
+        json_path = os.path.join(OUTPUT_DIR, "events_ambiguous.json")
+        if os.path.exists(csv_path):
+            generate_ambiguous_events_from_csv(csv_path, json_path)
+        else:
+            print(f"CSV não encontrado para gerar eventos: {csv_path}")
 
         # Exibe as informações do vídeo e do processamento
         print("Video: ", VIDEO_SOURCE)

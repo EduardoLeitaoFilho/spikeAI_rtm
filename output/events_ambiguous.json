@@ -1,0 +1,12 @@
+[
+  {
+    "event": "take_off",
+    "frame": 17,
+    "uncertainty": 2
+  },
+  {
+    "event": "landing",
+    "frame": 141,
+    "uncertainty": 2
+  }
+]
