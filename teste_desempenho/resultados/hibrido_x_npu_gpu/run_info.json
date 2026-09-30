@@ -1,0 +1,110 @@
+{
+  "started_at": "2026-09-30T16:24:01-03:00",
+  "config_file": "C:\\Users\\Eduardo Filho\\Desktop\\teste cortechx\\spikeAI_rtm\\teste_desempenho\\configs\\hibrido_x_npu_gpu.yaml",
+  "system": {
+    "os": "Windows-11-10.0.26300-SP0",
+    "python": "3.12.10",
+    "cpu": "Intel(R) Core(TM) Ultra 5 225H",
+    "cpu_logical_cores": 14,
+    "libraries": {
+      "rtmlib": "0.0.16",
+      "onnxruntime": "1.30.0",
+      "openvino": "2026.4.0",
+      "opencv-python": "5.0.0.93",
+      "numpy": "2.5.3"
+    }
+  },
+  "runtime": {
+    "label": "det openvino/npu + pose openvino/gpu",
+    "device_name": "det: Intel(R) AI Boost + pose: Intel(R) Arc(TM) 130T GPU (12GB) (iGPU)",
+    "hybrid": true,
+    "detector": {
+      "backend": "openvino",
+      "device": "npu",
+      "device_name": "Intel(R) AI Boost",
+      "precision": "FP16"
+    },
+    "pose": {
+      "backend": "openvino",
+      "device": "gpu",
+      "device_name": "Intel(R) Arc(TM) 130T GPU (12GB) (iGPU)",
+      "precision": "FP16"
+    }
+  },
+  "models": {
+    "pose": {
+      "name": "rtmpose_x",
+      "checkpoint": "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-x_simcc-body7_pt-body7_700e-384x288-71d7b7e9_20230629.zip",
+      "input_size": [
+        288,
+        384
+      ]
+    },
+    "detector": {
+      "name": "yolox_x",
+      "checkpoint": "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_x_8xb8-300e_humanart-a39d44ed.zip",
+      "input_size": [
+        640,
+        640
+      ]
+    }
+  },
+  "confidence_thresholds": {
+    "valid": 0.7,
+    "uncertain": 0.4
+  },
+  "status": "completed",
+  "video": {
+    "source": "C:\\Users\\Eduardo Filho\\Desktop\\teste cortechx\\spikeAI_rtm\\input\\video.mp4",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30.0,
+    "frames_processed": 211,
+    "duration_s": 7.0
+  },
+  "detection": {
+    "frames_with_person": 211,
+    "frames_without_person": 0,
+    "detection_rate_pct": 100.0,
+    "mean_keypoint_confidence": 0.6428
+  },
+  "performance": {
+    "model_load_s": 1.549,
+    "processing_wall_s": 146.666,
+    "pipeline_fps": 1.44,
+    "warmup_frames_excluded": 5,
+    "inference_ms": {
+      "detector": {
+        "frames": 206,
+        "warmup_ignored": true,
+        "mean": 209.83,
+        "median": 209.61,
+        "p95": 215.29,
+        "min": 205.84,
+        "max": 217.63,
+        "warmup_mean": 248.81
+      },
+      "pose": {
+        "frames": 206,
+        "warmup_ignored": true,
+        "mean": 466.38,
+        "median": 454.78,
+        "p95": 605.75,
+        "min": 329.58,
+        "max": 758.86,
+        "warmup_mean": 742.53
+      },
+      "total": {
+        "frames": 206,
+        "warmup_ignored": true,
+        "mean": 676.22,
+        "median": 664.75,
+        "p95": 817.44,
+        "min": 535.78,
+        "max": 975.91,
+        "warmup_mean": 991.34
+      }
+    },
+    "inference_fps": 1.48
+  }
+}

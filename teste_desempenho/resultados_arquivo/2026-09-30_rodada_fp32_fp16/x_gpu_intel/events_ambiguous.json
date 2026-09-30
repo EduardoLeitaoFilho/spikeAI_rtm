@@ -1,0 +1,16 @@
+[
+  {
+    "event": "take_off",
+    "frame": 17,
+    "uncertainty": 2,
+    "confidence": 0.795,
+    "status": "valid"
+  },
+  {
+    "event": "landing",
+    "frame": 130,
+    "uncertainty": 2,
+    "confidence": 0.7805,
+    "status": "valid"
+  }
+]

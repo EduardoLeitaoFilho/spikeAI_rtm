@@ -1,0 +1,9 @@
+# Dependências comuns a todos os dispositivos.
+# Não instale este arquivo sozinho: use requirements.txt ou requirements-cuda.txt
+# (ou simplesmente setup.ps1, que escolhe o certo).
+# Versões fixadas para que as máquinas do teste de desempenho fiquem idênticas.
+numpy==2.5.3
+opencv-python==5.0.0.93
+opencv-contrib-python==5.0.0.93
+pyyaml==6.0.3
+tqdm==4.70.1

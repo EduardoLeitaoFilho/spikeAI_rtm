@@ -1,5 +1,7 @@
-rtmlib
-opencv-python
-opencv-contrib-python
-numpy
-onnxruntime
+# Ambiente padrão: CPU, NPU Intel e GPU Intel (via OpenVINO).
+#   pip install -r requirements.txt
+# Para GPU NVIDIA (CUDA) use requirements-cuda.txt via: setup.ps1 -Alvo cuda
+-r requirements-base.txt
+rtmlib==0.0.16
+onnxruntime==1.30.0
+openvino==2026.4.0

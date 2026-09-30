@@ -1,0 +1,50 @@
+# Configuração do pipeline de pose.
+# Caminhos relativos são resolvidos a partir da raiz do projeto.
+# Checkpoints podem ser caminho local (.onnx/.zip) ou URL (baixada e cacheada pela rtmlib).
+
+input:
+  source: "input/video.mp4"   # caminho do vídeo, ou índice da webcam (ex.: 0)
+  show_preview: false
+
+pose:
+  model: "rtmpose_x" # Nome do modelo (identificação em logs/saídas)
+  checkpoint: "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-x_simcc-body7_pt-body7_700e-384x288-71d7b7e9_20230629.zip"
+
+  # Atenção: o RTMPose-x "384x288" é altura x largura.
+  input_size:
+    width: 288
+    height: 384
+
+  # Detector de pessoas (1ª etapa do RTMPose)
+  detector:
+    model: "yolox_x"
+    checkpoint: "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_x_8xb8-300e_humanart-a39d44ed.zip"
+    input_size:
+      width: 640
+      height: 640
+
+  # Combinações suportadas (backend -> device):
+  #   onnxruntime -> cpu | cuda | cuda:N | rocm | mps
+  #   openvino    -> cpu | gpu (Intel) | npu (Intel AI Boost)
+  #   opencv      -> cpu | cuda
+  runtime:
+    backend: "onnxruntime"
+    device: "cpu"
+
+  # O código usará esses valores para gerar o JSON
+  # conf >= valid -> válido | uncertain <= conf < valid -> incerto | abaixo -> inválido
+  confidence_thresholds:
+    valid: 0.70
+    uncertain: 0.40
+
+  output:
+    dir: "output"
+    landmarks_csv: "landmarks.csv"
+    events_json: "events_ambiguous.json"
+    run_info: "run_info.json"   # tempos de execução, hardware e estatísticas da execução
+    include_skeleton_video: true
+    skeleton_video: "annotated.mp4"
+
+metrics:
+  # Frames iniciais fora das estatísticas de tempo (aquecimento de GPU/NPU)
+  warmup_frames: 5

@@ -1,0 +1,45 @@
+# Teste de desempenho: RTMPose-x na NPU Intel AI Boost, com a Conv_323 em INT8
+# Em FP16 o RTMPose-x não compila na NPU: a Conv_323 não cabe na memória interna.
+# Só essa camada é quantizada para INT8; o resto roda em FP16. Gere o modelo antes com:
+#   .venv-quant\Scripts\python.exe teste_desempenho\quantizar_int8.py
+# Todas as configs deste diretório usam o mesmo vídeo, detector (YOLOX-x) e limiares.
+# Só mudam o modelo de pose, o dispositivo e a pasta de saída.
+
+input:
+  source: "input/video.mp4"
+  show_preview: false
+
+pose:
+  model: "rtmpose_x"
+  note: "Conv_323 em INT8 (camada que não cabe na memória da NPU em FP16); resto do modelo em FP16"
+  checkpoint: "teste_desempenho/modelos/rtmpose-x_int8.xml"
+  input_size:
+    width: 288
+    height: 384
+
+  detector:
+    model: "yolox_x"
+    checkpoint: "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_x_8xb8-300e_humanart-a39d44ed.zip"
+    input_size:
+      width: 640
+      height: 640
+
+  runtime:
+    backend: "openvino"
+    device: "npu"
+
+  confidence_thresholds:
+    valid: 0.70
+    uncertain: 0.40
+
+  output:
+    dir: "teste_desempenho/resultados/x_npu"
+    landmarks_csv: "landmarks.csv"
+    events_json: "events_ambiguous.json"
+    run_info: "run_info.json"
+    # Desligado para não somar escrita de vídeo ao tempo medido
+    include_skeleton_video: false
+    skeleton_video: "annotated.mp4"
+
+metrics:
+  warmup_frames: 5

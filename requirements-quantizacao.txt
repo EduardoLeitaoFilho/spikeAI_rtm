@@ -1,0 +1,14 @@
+# Ambiente SEPARADO (.venv-quant) só para gerar o modelo INT8 da NPU:
+#   powershell -ExecutionPolicy Bypass -File setup.ps1 -Alvo quantizacao
+#   .venv-quant\Scripts\python.exe teste_desempenho\quantizar_int8.py
+#
+# Separado porque o nncf exige numpy<2.5, e o ambiente dos testes usa
+# numpy 2.5.3: instalar aqui mudaria o ambiente em que os testes foram medidos.
+# O modelo gerado (.xml/.bin do OpenVINO) é lido normalmente pelo .venv principal.
+nncf==3.4.0
+openvino==2026.4.0
+onnxruntime==1.30.0
+rtmlib==0.0.16
+opencv-python==5.0.0.93
+opencv-contrib-python==5.0.0.93
+pyyaml==6.0.3

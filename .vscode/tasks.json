@@ -1,0 +1,45 @@
+{
+  // Terminal > Run Task...
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Setup: ambiente CPU / NPU / GPU Intel",
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -File \"${workspaceFolder}\\setup.ps1\" -Alvo intel",
+      "problemMatcher": []
+    },
+    {
+      "label": "Setup: ambiente GPU NVIDIA (CUDA)",
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -File \"${workspaceFolder}\\setup.ps1\" -Alvo cuda",
+      "problemMatcher": []
+    },
+    {
+      "label": "Setup: ambiente de quantização INT8 (.venv-quant)",
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -File \"${workspaceFolder}\\setup.ps1\" -Alvo quantizacao",
+      "problemMatcher": []
+    },
+    {
+      "label": "Quantizar RTMPose-x para INT8 (NPU)",
+      "type": "shell",
+      "command": "\"${workspaceFolder}\\.venv-quant\\Scripts\\python.exe\" teste_desempenho\\quantizar_int8.py",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Teste de desempenho: verificar dispositivos",
+      "type": "shell",
+      "command": "\"${workspaceFolder}\\.venv\\Scripts\\python.exe\" teste_desempenho\\run_benchmark.py --verificar",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Teste de desempenho: rodar todos",
+      "type": "shell",
+      "command": "\"${workspaceFolder}\\.venv\\Scripts\\python.exe\" teste_desempenho\\run_benchmark.py",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    }
+  ]
+}

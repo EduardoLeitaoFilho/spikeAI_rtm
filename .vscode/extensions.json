@@ -1,0 +1,9 @@
+{
+  // O VS Code oferece instalar estas extensões ao abrir a pasta do projeto
+  "recommendations": [
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "ms-python.debugpy",
+    "redhat.vscode-yaml"
+  ]
+}

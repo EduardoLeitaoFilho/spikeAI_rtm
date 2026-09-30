@@ -1,1 +1,5 @@
 .venv
+.venv-quant
+__pycache__/
+# modelos gerados (quantizados) pelo teste de desempenho
+teste_desempenho/modelos/

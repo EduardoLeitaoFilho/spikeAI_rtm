@@ -1,0 +1,44 @@
+{
+  // Run and Debug (F5): escolha a configuração na lista
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Pipeline (config padrão)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/main.py",
+      "args": ["--config", "${workspaceFolder}/config/pose_config.yaml"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Desempenho: todos os testes",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/teste_desempenho/run_benchmark.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Desempenho: escolher um teste...",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/teste_desempenho/run_benchmark.py",
+      "args": ["${input:testeDesempenho}"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "testeDesempenho",
+      "type": "pickString",
+      "description": "Qual teste de desempenho rodar?",
+      "options": [
+        "x_cpu", "x_gpu_intel", "x_npu", "x_gpu_cuda",
+        "m_cpu", "m_gpu_intel", "m_npu", "m_gpu_cuda",
+        "hibrido_x_npu_gpu"
+      ]
+    }
+  ]
+}

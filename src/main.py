@@ -3,61 +3,53 @@ Pipeline de pose com RTMPose (via rtmlib, backend OpenCV) + OpenCV.
 Mesma estrutura do pipeline com YOLO: lê vídeo/webcam, roda inferência
 frame a frame, mostra/salva o vídeo anotado e exporta os keypoints para CSV.
 
-Requisitos:
-    pip install rtmlib opencv-python opencv-contrib-python numpy onnxruntime
+Requisitos: ver setup.ps1 / requirements.txt (CPU, NPU, GPU Intel)
+e requirements-cuda.txt (GPU NVIDIA).
 
 Observação: o RTMPose funciona em duas etapas (detector de pessoa + estimador
 de pose). A rtmlib cuida dessas duas etapas internamente e baixa os modelos
 ONNX automaticamente na primeira execução (fica em cache local depois).
+
+Todo o comportamento (modelos, checkpoints, tamanhos de entrada, limiares e
+saídas) vem do YAML de configuração:
+    python src/main.py --config config/pose_config.yaml
+
+Obs: o backend 'opencv' apresenta bugs de compatibilidade (erro no gather layer)
+com versões recentes do OpenCV DNN nesses modelos ONNX específicos.
+'onnxruntime' é o backend oficialmente mais testado pela rtmlib.
 """
 
 import os
 import csv
 import time
 import json
+import argparse
+from datetime import datetime
 from pathlib import Path
 
 import cv2
 import numpy as np
-from rtmlib import Body
+from rtmlib import RTMPose, YOLOX
+
+from config import ConfidenceThresholds, PipelineConfig, PoseConfig, RuntimeConfig, load_config
+from runtime_check import (
+    DeviceUnavailable, check_runtime, describe_runtime, describe_system, prepare_checkpoint,
+    runtime_label, verify_active,
+)
 
 
 # ============================================================
-# CONFIG
+# CONSTANTES DE FORMATO (COCO-17)
 # ============================================================
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "pose_config.yaml"
 
-# Fonte do vídeo: 0 para webcam, ou caminho de um arquivo .mp4
-VIDEO_SOURCE = str(PROJECT_ROOT / "input" / "video.mp4")
+# Cores (BGR) dos keypoints por classe de confiança
+KPT_COLORS = {"valid": (0, 255, 0), "uncertain": (0, 200, 255)}
+SKELETON_COLOR = (0, 200, 255)
 
-# Diretório e nomes de saída
-OUTPUT_DIR = str(PROJECT_ROOT / "output")
-OUTPUT_CSV_NAME = "landmarks.csv"
-OUTPUT_VIDEO_NAME = "annotated.mp4"
-
-# Se True, salva o vídeo anotado junto com o CSV
-SAVE_VIDEO = True
-
-# Se True, mostra a janela do OpenCV durante o processamento
-SHOW_PREVIEW = False
-
-# 'performance' (mais preciso, mais lento), 'balanced' ou 'lightweight' (mais rápido)
-POSE_MODE = "performance"
-
-# 'cpu', 'cuda' ou 'mps'
-DEVICE = "cpu"
-
-# 'opencv', 'onnxruntime' ou 'openvino'
-# Obs: o backend 'opencv' apresenta bugs de compatibilidade (erro no gather layer)
-# com versões recentes do OpenCV DNN nesses modelos ONNX específicos.
-# 'onnxruntime' é o backend oficialmente mais testado pela rtmlib.
-BACKEND = "onnxruntime"
-
-# Confiança mínima para considerar um keypoint válido (usado na visualização)
-KPT_CONF_THRESHOLD = 0.5
-
-# Nomes dos 17 keypoints no formato COCO, na ordem retornada pelo RTMPose (Body)
+# Nomes dos 17 keypoints no formato COCO, na ordem retornada pelo RTMPose
 KEYPOINT_NAMES = [
     "nose", "left_eye", "right_eye", "left_ear", "right_ear",
     "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
@@ -78,16 +70,67 @@ SKELETON_CONNECTIONS = [
 # POSE DETECTOR
 # ============================================================
 
-class PoseDetector:
-    """Carrega o RTMPose (via rtmlib) e roda inferência em frames individuais."""
+class ModelLoadError(RuntimeError):
+    """Um modelo não pôde ser carregado/compilado no dispositivo configurado."""
 
-    def __init__(self, mode: str, backend: str, device: str):
-        self.model = Body(
-            mode=mode,
-            backend=backend,
-            device=device,
-            to_openpose=False,
+
+def _load_model(factory, name: str, runtime: RuntimeConfig):
+    """Carrega um modelo, identificando qual modelo e dispositivo falharam."""
+    try:
+        tool = factory()
+    except Exception as e:
+        cause = str(e).strip().splitlines()[-1] if str(e).strip() else type(e).__name__
+        raise ModelLoadError(
+            f"{name} não pôde ser compilado em {runtime.backend}/{runtime.device}: {cause}"
+        ) from e
+    verify_active(tool, runtime)
+    return tool
+
+
+class PoseDetector:
+    """
+    Carrega o detector de pessoas (YOLOX) e o RTMPose (via rtmlib) e roda a
+    inferência em frames individuais. Cada modelo pode rodar em um dispositivo
+    diferente (modo híbrido); é o mesmo fluxo de rtmlib.Body, que usa um só.
+    """
+
+    def __init__(self, pose_cfg: PoseConfig):
+        self.thresholds: ConfidenceThresholds = pose_cfg.confidence_thresholds
+        det_cfg = pose_cfg.detector
+        check_runtime(det_cfg.runtime)
+        check_runtime(pose_cfg.runtime)
+        det_ckpt = prepare_checkpoint(det_cfg.checkpoint, det_cfg.input_size, det_cfg.runtime)
+        pose_ckpt = prepare_checkpoint(pose_cfg.checkpoint, pose_cfg.input_size, pose_cfg.runtime)
+
+        # Inclui a compilação do modelo para GPU/NPU
+        start = time.perf_counter()
+        self.det_model = _load_model(
+            lambda: YOLOX(det_ckpt, model_input_size=det_cfg.input_size.as_tuple(),
+                          backend=det_cfg.runtime.backend, device=det_cfg.runtime.device),
+            f"{det_cfg.model} (detector)", det_cfg.runtime,
         )
+        self.pose_model = _load_model(
+            lambda: RTMPose(pose_ckpt, model_input_size=pose_cfg.input_size.as_tuple(),
+                            to_openpose=False,
+                            backend=pose_cfg.runtime.backend, device=pose_cfg.runtime.device),
+            f"{pose_cfg.model} (pose)", pose_cfg.runtime,
+        )
+        self.load_time_s = time.perf_counter() - start
+
+        # Tempos de inferência por frame (ms), separados por etapa
+        self.det_times_ms = []
+        self.pose_times_ms = []
+
+    def _infer(self, frame):
+        """Detector -> pose, cronometrando cada etapa separadamente."""
+        t0 = time.perf_counter()
+        bboxes = self.det_model(frame)
+        det_ms = (time.perf_counter() - t0) * 1000
+        t0 = time.perf_counter()
+        keypoints, scores = self.pose_model(frame, bboxes=bboxes)
+        self.det_times_ms.append(det_ms)
+        self.pose_times_ms.append((time.perf_counter() - t0) * 1000)
+        return keypoints, scores
 
     def process_frame(self, frame):
         """
@@ -95,7 +138,7 @@ class PoseDetector:
           - annotated_frame: frame com o esqueleto desenhado
           - people_keypoints: lista de arrays (17, 3) -> (x, y, conf) por pessoa
         """
-        keypoints, scores = self.model(frame)  # keypoints: (num_pessoas, 17, 2) | scores: (num_pessoas, 17)
+        keypoints, scores = self._infer(frame)  # keypoints: (num_pessoas, 17, 2) | scores: (num_pessoas, 17)
 
         annotated_frame = frame.copy()
         people_keypoints = []
@@ -111,16 +154,22 @@ class PoseDetector:
         return annotated_frame, people_keypoints
 
     def _draw_person(self, frame, person_kpts):
-        """Desenha os pontos e o esqueleto de uma pessoa no frame."""
-        for x, y, conf in person_kpts:
-            if conf >= KPT_CONF_THRESHOLD:
-                cv2.circle(frame, (int(x), int(y)), 4, (0, 255, 0), -1)
+        """
+        Desenha os pontos e o esqueleto de uma pessoa no frame.
+        Keypoints 'valid' e 'uncertain' são desenhados (com cores diferentes);
+        'invalid' é omitido, assim como as conexões que dependem dele.
+        """
+        classes = [self.thresholds.classify(conf) for _, _, conf in person_kpts]
+
+        for (x, y, _), cls in zip(person_kpts, classes):
+            if cls != "invalid":
+                cv2.circle(frame, (int(x), int(y)), 4, KPT_COLORS[cls], -1)
 
         for i, j in SKELETON_CONNECTIONS:
-            xi, yi, ci = person_kpts[i]
-            xj, yj, cj = person_kpts[j]
-            if ci >= KPT_CONF_THRESHOLD and cj >= KPT_CONF_THRESHOLD:
-                cv2.line(frame, (int(xi), int(yi)), (int(xj), int(yj)), (0, 200, 255), 2)
+            if classes[i] != "invalid" and classes[j] != "invalid":
+                xi, yi, _ = person_kpts[i]
+                xj, yj, _ = person_kpts[j]
+                cv2.line(frame, (int(xi), int(yi)), (int(xj), int(yj)), SKELETON_COLOR, 2)
 
 
 # ============================================================
@@ -188,33 +237,52 @@ def ankle_midpoint_y(row):
     return (left_y + right_y) / 2.0
 
 
-def build_event(event_name: str, frame_idx: int, uncertainty: int = 0):
-    return {
-        "event": event_name,
-        "frame": int(frame_idx),
-        "uncertainty": int(uncertainty),
-    }
+def ankle_confidence(row):
+    """Confiança do ponto médio dos tornozelos: a menor entre os dois (elo mais fraco)."""
+    left_conf = float(row.get("left_ankle_conf", 0))
+    right_conf = float(row.get("right_ankle_conf", 0))
+    return min(left_conf, right_conf)
 
 
-def detect_takeoff_ambiguous(rows):
-    """Heurística simples para teste do formato: frame de maior elevação dos tornozelos."""
-    if not rows:
-        return []
-
+def ankle_series(rows, thresholds: ConfidenceThresholds):
+    """
+    Série temporal dos tornozelos da pessoa com mais detecções.
+    Frames com confiança 'invalid' são descartados antes da análise.
+    Retorna (frames, heights, confs) alinhados.
+    """
     tracks = get_person_tracks(rows)
     if not tracks:
-        return []
+        return [], [], []
 
     person_id = max(tracks.keys(), key=lambda pid: len(tracks[pid]))
     ordered = sorted(tracks[person_id], key=lambda x: x[0])
 
-    frames = []
-    heights = []
-
+    frames, heights, confs = [], [], []
     for frame, row in ordered:
+        conf = ankle_confidence(row)
+        if thresholds.classify(conf) == "invalid":
+            continue
         frames.append(frame)
         heights.append(ankle_midpoint_y(row))
+        confs.append(conf)
 
+    return frames, heights, confs
+
+
+def build_event(event_name: str, frame_idx: int, confidence: float,
+                thresholds: ConfidenceThresholds, uncertainty: int = 0):
+    return {
+        "event": event_name,
+        "frame": int(frame_idx),
+        "uncertainty": int(uncertainty),
+        "confidence": round(float(confidence), 4),
+        "status": thresholds.classify(confidence),
+    }
+
+
+def detect_takeoff_ambiguous(rows, thresholds: ConfidenceThresholds):
+    """Heurística simples para teste do formato: frame de maior elevação dos tornozelos."""
+    frames, heights, confs = ankle_series(rows, thresholds)
     if len(heights) < 5:
         return []
 
@@ -223,28 +291,12 @@ def detect_takeoff_ambiguous(rows):
     end = min(len(heights), min_idx + 3)
     candidate = min(range(start, end), key=lambda i: heights[i])
 
-    return [build_event("take_off", frames[candidate], 2)]
+    return [build_event("take_off", frames[candidate], confs[candidate], thresholds, 2)]
 
 
-def detect_landing_ambiguous(rows):
+def detect_landing_ambiguous(rows, thresholds: ConfidenceThresholds):
     """Heurística simples para teste do formato: frame de maior altura antes da queda."""
-    if not rows:
-        return []
-
-    tracks = get_person_tracks(rows)
-    if not tracks:
-        return []
-
-    person_id = max(tracks.keys(), key=lambda pid: len(tracks[pid]))
-    ordered = sorted(tracks[person_id], key=lambda x: x[0])
-
-    frames = []
-    heights = []
-
-    for frame, row in ordered:
-        frames.append(frame)
-        heights.append(ankle_midpoint_y(row))
-
+    frames, heights, confs = ankle_series(rows, thresholds)
     if len(heights) < 5:
         return []
 
@@ -253,17 +305,20 @@ def detect_landing_ambiguous(rows):
     end = min(len(heights), max_idx + 3)
     candidate = max(range(start, end), key=lambda i: heights[i])
 
-    return [build_event("landing", frames[candidate], 2)]
+    return [build_event("landing", frames[candidate], confs[candidate], thresholds, 2)]
 
 
-def generate_ambiguous_events_from_csv(csv_path: str, json_output: str):
+def generate_ambiguous_events_from_csv(csv_path: str, json_output: str,
+                                       thresholds: ConfidenceThresholds):
     rows = load_landmarks_from_csv(csv_path)
     if not rows:
         raise ValueError(f"CSV vazio: {csv_path}")
 
     events = []
-    events.extend(detect_takeoff_ambiguous(rows))
-    events.extend(detect_landing_ambiguous(rows))
+    events.extend(detect_takeoff_ambiguous(rows, thresholds))
+    events.extend(detect_landing_ambiguous(rows, thresholds))
+    if not events:
+        print("Nenhum evento gerado: menos de 5 frames com tornozelos acima do limiar 'uncertain'.")
 
     os.makedirs(os.path.dirname(json_output), exist_ok=True)
     with open(json_output, "w", encoding="utf-8") as f:
@@ -278,31 +333,139 @@ def generate_ambiguous_events_from_csv(csv_path: str, json_output: str):
 # MAIN
 # ============================================================
 
-def main():
-    detector = PoseDetector(mode=POSE_MODE, backend=BACKEND, device=DEVICE)
-    exporter = CSVExporter(os.path.join(OUTPUT_DIR, OUTPUT_CSV_NAME))
+def timing_stats(values_ms, warmup_frames: int) -> dict:
+    """
+    Estatísticas de tempo (ms) ignorando os `warmup_frames` iniciais.
+    Se o vídeo tiver frames de menos, usa todos e sinaliza no resultado.
+    """
+    if not values_ms:
+        return {"frames": 0}
+    measured = values_ms[warmup_frames:] or values_ms
+    arr = np.asarray(measured)
+    return {
+        "frames": len(measured),
+        "warmup_ignored": len(measured) < len(values_ms),
+        "mean": round(float(arr.mean()), 2),
+        "median": round(float(np.median(arr)), 2),
+        "p95": round(float(np.percentile(arr, 95)), 2),
+        "min": round(float(arr.min()), 2),
+        "max": round(float(arr.max()), 2),
+        "warmup_mean": round(float(np.mean(values_ms[:warmup_frames])), 2) if warmup_frames and len(values_ms) > warmup_frames else None,
+    }
 
-    cap = cv2.VideoCapture(VIDEO_SOURCE)
+
+# Código de saída quando o dispositivo/modelo não pode ser usado (não é um bug do pipeline)
+EXIT_MODEL_UNAVAILABLE = 3
+
+
+def _safe_describe(runtime: RuntimeConfig, tool=None) -> dict:
+    try:
+        return describe_runtime(runtime, tool)
+    except Exception:  # dispositivo ausente: não dá para consultar o nome
+        return {"backend": runtime.backend, "device": runtime.device, "device_name": None}
+
+
+def base_run_info(cfg: PipelineConfig, args, started_at, detector=None) -> dict:
+    """Campos do run_info.json comuns a execuções completas e falhas de carga."""
+    pose_cfg = cfg.pose
+    det_cfg = pose_cfg.detector
+    det_rt = _safe_describe(det_cfg.runtime, detector.det_model if detector else None)
+    pose_rt = _safe_describe(pose_cfg.runtime, detector.pose_model if detector else None)
+    if det_cfg.runtime == pose_cfg.runtime:
+        device_summary = pose_rt["device_name"]
+    else:
+        device_summary = f"det: {det_rt['device_name']} + pose: {pose_rt['device_name']}"
+
+    return {
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "config_file": str(Path(args.config).resolve()),
+        "note": pose_cfg.note,
+        "system": describe_system(),
+        "runtime": {
+            "label": runtime_label(pose_cfg.runtime, det_cfg.runtime),
+            "device_name": device_summary,
+            "hybrid": det_cfg.runtime != pose_cfg.runtime,
+            "detector": det_rt,
+            "pose": pose_rt,
+        },
+        "models": {
+            "pose": {
+                "name": pose_cfg.model,
+                "checkpoint": pose_cfg.checkpoint,
+                "input_size": pose_cfg.input_size.as_tuple(),
+            },
+            "detector": {
+                "name": det_cfg.model,
+                "checkpoint": det_cfg.checkpoint,
+                "input_size": det_cfg.input_size.as_tuple(),
+            },
+        },
+        "confidence_thresholds": {
+            "valid": pose_cfg.confidence_thresholds.valid,
+            "uncertain": pose_cfg.confidence_thresholds.uncertain,
+        },
+    }
+
+
+def write_run_info(out_cfg, run_info: dict):
+    os.makedirs(out_cfg.dir, exist_ok=True)
+    with open(out_cfg.run_info, "w", encoding="utf-8") as f:
+        json.dump(run_info, f, ensure_ascii=False, indent=2)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Pipeline de pose RTMPose")
+    parser.add_argument(
+        "--config",
+        default=str(DEFAULT_CONFIG_PATH),
+        help=f"Caminho do YAML de configuração (padrão: {DEFAULT_CONFIG_PATH})",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    cfg: PipelineConfig = load_config(args.config, base_dir=PROJECT_ROOT)
+    pose_cfg = cfg.pose
+    out_cfg = pose_cfg.output
+
+    started_at = datetime.now().astimezone()
+    try:
+        detector = PoseDetector(pose_cfg)
+    except (DeviceUnavailable, ModelLoadError) as e:
+        # Registra a falha no run_info.json para o comparativo mostrar o motivo
+        status = "indisponível" if isinstance(e, DeviceUnavailable) else "incompatível"
+        run_info = base_run_info(cfg, args, started_at)
+        run_info.update({"status": status, "error": str(e)})
+        write_run_info(out_cfg, run_info)
+        print(f"{status.upper()}: {e}")
+        raise SystemExit(EXIT_MODEL_UNAVAILABLE)
+
+    exporter = CSVExporter(str(out_cfg.landmarks_csv))
+
+    cap = cv2.VideoCapture(cfg.input.source)
     if not cap.isOpened():
-        raise RuntimeError(f"Não foi possível abrir a fonte de vídeo: {VIDEO_SOURCE}")
+        raise RuntimeError(f"Não foi possível abrir a fonte de vídeo: {cfg.input.source}")
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     writer = None
-    if SAVE_VIDEO:
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        video_path = os.path.join(OUTPUT_DIR, OUTPUT_VIDEO_NAME)
+    if out_cfg.include_skeleton_video:
+        os.makedirs(out_cfg.dir, exist_ok=True)
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
+        writer = cv2.VideoWriter(str(out_cfg.skeleton_video), fourcc, fps, (width, height))
 
     # Estatísticas de processamento
     frame_index = 0
     frames_com_deteccao = 0
     frames_sem_deteccao = 0
+    conf_sum = 0.0
+    conf_count = 0
     last_timestamp_ms = 0
-    start_time = time.time()
+    completed = False
+    start_time = time.perf_counter()
 
     try:
         while cap.isOpened():
@@ -318,21 +481,26 @@ def main():
                 frames_com_deteccao += 1
             else:
                 frames_sem_deteccao += 1
+            for kpts in people_keypoints:
+                conf_sum += float(kpts[:, 2].sum())
+                conf_count += len(kpts)
 
             last_timestamp_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
 
             if writer is not None:
                 writer.write(annotated_frame)
 
-            if SHOW_PREVIEW:
+            if cfg.input.show_preview:
                 cv2.imshow("RTMPose Pipeline", annotated_frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
 
             frame_index += 1
 
+        completed = True
+
     finally:
-        elapsed_time = time.time() - start_time
+        elapsed_time = time.perf_counter() - start_time
 
         cap.release()
         if writer is not None:
@@ -340,16 +508,18 @@ def main():
         cv2.destroyAllWindows()
         exporter.save()
 
-        csv_path = os.path.join(OUTPUT_DIR, OUTPUT_CSV_NAME)
-        json_path = os.path.join(OUTPUT_DIR, "events_ambiguous.json")
+        csv_path = str(out_cfg.landmarks_csv)
+        json_path = str(out_cfg.events_json)
         if os.path.exists(csv_path):
-            generate_ambiguous_events_from_csv(csv_path, json_path)
+            generate_ambiguous_events_from_csv(csv_path, json_path, pose_cfg.confidence_thresholds)
         else:
             print(f"CSV não encontrado para gerar eventos: {csv_path}")
 
         # Exibe as informações do vídeo e do processamento
-        print("Video: ", VIDEO_SOURCE)
-        print("Modelo: RTMPose (", POSE_MODE, "/", BACKEND, ")")
+        print("Config: ", args.config)
+        print("Video: ", cfg.input.source)
+        print("Modelo: ", pose_cfg.model, "+", pose_cfg.detector.model,
+              "(", runtime_label(pose_cfg.runtime, pose_cfg.detector.runtime), ")")
         print("Resolução: ", width, "x", height)
         print("FPS: ", fps)
         print("Número de frames processados: ", frame_index)
@@ -359,6 +529,52 @@ def main():
             print("Taxa de detecção: ", frames_com_deteccao / frame_index * 100, "%")
         print("Duração do vídeo processado: ", last_timestamp_ms / 1000, "segundos")
         print("Tempo real de processamento: ", round(elapsed_time, 2), "segundos")
+
+        warmup = cfg.metrics.warmup_frames
+        det_stats = timing_stats(detector.det_times_ms, warmup)
+        pose_stats = timing_stats(detector.pose_times_ms, warmup)
+        total_ms = [d + p for d, p in zip(detector.det_times_ms, detector.pose_times_ms)]
+        total_stats = timing_stats(total_ms, warmup)
+
+        run_info = base_run_info(cfg, args, started_at, detector)
+        run_info.update({
+            "status": "completed" if completed else "interrupted",
+            "video": {
+                "source": str(cfg.input.source),
+                "width": width,
+                "height": height,
+                "fps": fps,
+                "frames_processed": frame_index,
+                "duration_s": round(last_timestamp_ms / 1000, 3),
+            },
+            "detection": {
+                "frames_with_person": frames_com_deteccao,
+                "frames_without_person": frames_sem_deteccao,
+                "detection_rate_pct": round(frames_com_deteccao / frame_index * 100, 2) if frame_index else None,
+                "mean_keypoint_confidence": round(conf_sum / conf_count, 4) if conf_count else None,
+            },
+            "performance": {
+                "model_load_s": round(detector.load_time_s, 3),
+                "processing_wall_s": round(elapsed_time, 3),
+                "pipeline_fps": round(frame_index / elapsed_time, 2) if elapsed_time > 0 else None,
+                "warmup_frames_excluded": warmup,
+                "inference_ms": {
+                    "detector": det_stats,
+                    "pose": pose_stats,
+                    "total": total_stats,
+                },
+                "inference_fps": round(1000 / total_stats["mean"], 2) if total_stats.get("mean") else None,
+            },
+        })
+        write_run_info(out_cfg, run_info)
+
+        perf = run_info["performance"]
+        print("Dispositivo: ", run_info["runtime"]["device_name"])
+        print("Carga dos modelos: ", perf["model_load_s"], "segundos")
+        print("Inferência média por frame: ", total_stats.get("mean"), "ms",
+              "(detector", det_stats.get("mean"), "+ pose", pose_stats.get("mean"), ")")
+        print("FPS de inferência: ", perf["inference_fps"], "| FPS do pipeline: ", perf["pipeline_fps"])
+        print(f"Métricas salvas em: {out_cfg.run_info}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,46 @@
+# Teste de desempenho: híbrido: detector na NPU + RTMPose-x na GPU Intel
+# O detector (YOLOX-x) compila na NPU; a pose (RTMPose-x) não, então fica na GPU.
+# Todas as configs deste diretório usam o mesmo vídeo, detector (YOLOX-x) e limiares.
+# Só mudam o modelo de pose, o dispositivo e a pasta de saída.
+
+input:
+  source: "input/video.mp4"
+  show_preview: false
+
+pose:
+  model: "rtmpose_x"
+  checkpoint: "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-x_simcc-body7_pt-body7_700e-384x288-71d7b7e9_20230629.zip"
+  input_size:
+    width: 288
+    height: 384
+
+  detector:
+    model: "yolox_x"
+    checkpoint: "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_x_8xb8-300e_humanart-a39d44ed.zip"
+    input_size:
+      width: 640
+      height: 640
+    # Modo híbrido: o detector roda num dispositivo diferente da pose
+    runtime:
+      backend: "openvino"
+      device: "npu"
+
+  runtime:
+    backend: "openvino"
+    device: "gpu"
+
+  confidence_thresholds:
+    valid: 0.70
+    uncertain: 0.40
+
+  output:
+    dir: "teste_desempenho/resultados/hibrido_x_npu_gpu"
+    landmarks_csv: "landmarks.csv"
+    events_json: "events_ambiguous.json"
+    run_info: "run_info.json"
+    # Desligado para não somar escrita de vídeo ao tempo medido
+    include_skeleton_video: false
+    skeleton_video: "annotated.mp4"
+
+metrics:
+  warmup_frames: 5

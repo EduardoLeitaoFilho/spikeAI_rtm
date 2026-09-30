@@ -1,0 +1,12 @@
+# Ambiente GPU NVIDIA (CUDA). Instale com:  setup.ps1 -Alvo cuda
+#
+# Por que não um 'pip install -r' simples?
+#   - onnxruntime (CPU) e onnxruntime-gpu não podem coexistir (mesmo módulo).
+#   - rtmlib declara 'onnxruntime' como dependência, então precisa ser instalada
+#     com --no-deps depois deste arquivo (o setup.ps1 faz isso).
+#
+# CUDA 13 e cuDNN 9 vêm como pacotes pip (extras [cuda,cudnn]): não é preciso
+# instalar o CUDA Toolkit, só o driver NVIDIA (versão com suporte a CUDA 13).
+-r requirements-base.txt
+onnxruntime-gpu[cuda,cudnn]==1.30.0
+nvidia-cublas~=13.0

@@ -1,0 +1,42 @@
+# Teste de desempenho: RTMPose-m em CPU
+# Roda em qualquer máquina.
+# Todas as configs deste diretório usam o mesmo vídeo, detector (YOLOX-x) e limiares.
+# Só mudam o modelo de pose, o dispositivo e a pasta de saída.
+
+input:
+  source: "input/video.mp4"
+  show_preview: false
+
+pose:
+  model: "rtmpose_m"
+  checkpoint: "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-m_simcc-body7_pt-body7_420e-256x192-e48f03d0_20230504.zip"
+  input_size:
+    width: 192
+    height: 256
+
+  detector:
+    model: "yolox_x"
+    checkpoint: "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_x_8xb8-300e_humanart-a39d44ed.zip"
+    input_size:
+      width: 640
+      height: 640
+
+  runtime:
+    backend: "onnxruntime"
+    device: "cpu"
+
+  confidence_thresholds:
+    valid: 0.70
+    uncertain: 0.40
+
+  output:
+    dir: "teste_desempenho/resultados/m_cpu"
+    landmarks_csv: "landmarks.csv"
+    events_json: "events_ambiguous.json"
+    run_info: "run_info.json"
+    # Desligado para não somar escrita de vídeo ao tempo medido
+    include_skeleton_video: false
+    skeleton_video: "annotated.mp4"
+
+metrics:
+  warmup_frames: 5
