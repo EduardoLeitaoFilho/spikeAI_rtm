@@ -1,5 +1,10 @@
-rtmlib
-opencv-python
-opencv-contrib-python
-numpy
-onnxruntime
+# Ambiente testado: Python 3.13.1 / Windows 11 / CPU only
+rtmlib==0.0.16
+onnxruntime==1.30.0
+# O rtmlib exige os dois pacotes OpenCV. Manter SEMPRE na mesma versao.
+opencv-python==5.0.0.93
+opencv-contrib-python==5.0.0.93
+numpy==2.5.3
+
+# Para GPU: trocar onnxruntime por onnxruntime-gpu (nunca instalar os dois)
+# e usar DEVICE = "cuda" no codigo. Requer CUDA/cuDNN compativeis.

@@ -1,10 +1,10 @@
 """
-Pipeline de pose com RTMPose (via rtmlib, backend OpenCV) + OpenCV.
+Pipeline de pose com RTMPose (via rtmlib, backend onnxruntime) + OpenCV.
 Mesma estrutura do pipeline com YOLO: lê vídeo/webcam, roda inferência
 frame a frame, mostra/salva o vídeo anotado e exporta os keypoints para CSV.
 
 Requisitos:
-    pip install rtmlib opencv-python opencv-contrib-python numpy onnxruntime
+    pip install -r requirements.txt
 
 Observação: o RTMPose funciona em duas etapas (detector de pessoa + estimador
 de pose). A rtmlib cuida dessas duas etapas internamente e baixa os modelos
@@ -19,9 +19,8 @@ import numpy as np
 from rtmlib import Body
 
 
-# ============================================================
 # CONFIG
-# ============================================================
+
 
 # Fonte do vídeo: 0 para webcam, ou caminho de um arquivo .mp4
 VIDEO_SOURCE = "../input/video.mp4"
@@ -52,6 +51,12 @@ BACKEND = "onnxruntime"
 # Confiança mínima para considerar um keypoint válido (usado na visualização)
 KPT_CONF_THRESHOLD = 0.5
 
+# Se True, desenha o número do frame no canto inferior esquerdo do vídeo
+SHOW_FRAME_NUMBER = True
+
+# Se True, a numeração começa em 1 (frame 1, 2, 3, ...); se False, começa em 0
+FRAME_NUMBER_STARTS_AT_ONE = True
+
 # Nomes dos 17 keypoints no formato COCO, na ordem retornada pelo RTMPose (Body)
 KEYPOINT_NAMES = [
     "nose", "left_eye", "right_eye", "left_ear", "right_ear",
@@ -69,9 +74,45 @@ SKELETON_CONNECTIONS = [
 ]
 
 
-# ============================================================
+
+# OVERLAY DE NÚMERO DO FRAME
+
+
+def draw_frame_number(frame, frame_number: int):
+    """
+    Desenha o número do frame no canto inferior esquerdo da imagem.
+    Usa um fundo preto semi-opaco atrás do texto para garantir legibilidade
+    independente da cor do piso/quadra atrás.
+    """
+    text = str(frame_number)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 1.0
+    thickness = 2
+    margin = 15
+
+    (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+
+    height = frame.shape[0]
+    x = margin
+    y = height - margin  # baseline do texto, próximo ao canto inferior esquerdo
+
+    # Retângulo de fundo para contraste
+    cv2.rectangle(
+        frame,
+        (x - 5, y - text_h - 5),
+        (x + text_w + 5, y + baseline + 5),
+        (0, 0, 0),
+        -1,
+    )
+
+    cv2.putText(
+        frame, text, (x, y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA
+    )
+
+
+
 # POSE DETECTOR
-# ============================================================
+
 
 class PoseDetector:
     """Carrega o RTMPose (via rtmlib) e roda inferência em frames individuais."""
@@ -118,9 +159,7 @@ class PoseDetector:
                 cv2.line(frame, (int(xi), int(yi)), (int(xj), int(yj)), (0, 200, 255), 2)
 
 
-# ============================================================
 # CSV EXPORTER
-# ============================================================
 
 class CSVExporter:
     """Acumula os keypoints frame a frame e exporta tudo para CSV ao final."""
@@ -158,9 +197,8 @@ class CSVExporter:
         print(f"CSV salvo em: {self.output_path} ({len(self.rows)} linhas)")
 
 
-# ============================================================
+
 # MAIN
-# ============================================================
 
 def main():
     detector = PoseDetector(mode=POSE_MODE, backend=BACKEND, device=DEVICE)
@@ -195,6 +233,10 @@ def main():
                 break
 
             annotated_frame, people_keypoints = detector.process_frame(frame)
+
+            if SHOW_FRAME_NUMBER:
+                displayed_number = frame_index + 1 if FRAME_NUMBER_STARTS_AT_ONE else frame_index
+                draw_frame_number(annotated_frame, displayed_number)
 
             exporter.add_frame(frame_index, people_keypoints)
 
