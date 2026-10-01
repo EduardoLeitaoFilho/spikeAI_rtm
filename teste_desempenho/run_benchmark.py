@@ -184,10 +184,31 @@ def row_from_run_info(name, run_info_path, status_suffix=""):
     row = {"config": name, "status": info.get("status", "?") + status_suffix}
     row.update({col: _get(info, path) for col, path in COLUMNS})
     row["cpu_maquina"] = _get(info, ("system", "cpu"))
+    row["precisao"] = precision_summary(row.get("precisao_det"), row.get("precisao_pose"))
+    row["tempo_total"] = format_duration(row.get("tempo_total_s"))
     row.update(per_person_columns(info, Path(run_info_path).parent / "landmarks.csv"))
     # Observação: motivo da falha e/ou nota da config (ex.: "rodado em INT8")
     row["observacao"] = " | ".join(t for t in (info.get("error"), info.get("note")) if t) or None
     return row
+
+
+def format_duration(seconds):
+    """896.5 -> '14 min 56 s'; 43.1 -> '43 s'."""
+    if seconds is None:
+        return None
+    minutes, secs = divmod(int(round(seconds)), 60)
+    return f"{minutes} min {secs:02d} s" if minutes else f"{secs} s"
+
+
+def precision_summary(det, pose):
+    """Precisão numérica do teste numa coluna: 'FP32', 'FP16' ou, se diferirem, as duas."""
+    norm = lambda p: p.replace(" (+", "+").replace(")", "") if p else None  # noqa: E731
+    det, pose = norm(det), norm(pose)
+    if det is None and pose is None:
+        return None
+    if det == pose:
+        return det
+    return f"det {det} / pose {pose}"
 
 
 def per_person_columns(info, landmarks_csv):
@@ -251,7 +272,7 @@ def add_precision(rows):
 def write_reports(rows):
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     add_precision(rows)
-    fields = (["config", "status", "cpu_maquina"] + [c for c, _ in COLUMNS]
+    fields = (["config", "status", "cpu_maquina", "precisao", "tempo_total"] + [c for c, _ in COLUMNS]
               + PER_PERSON_COLUMNS + PRECISION_COLUMNS)
 
     csv_path = RESULTS_DIR / "comparativo.csv"
@@ -260,8 +281,8 @@ def write_reports(rows):
         writer.writeheader()
         writer.writerows(rows)
 
-    md_fields = ["config", "status", "modelo_pose", "execucao", "cpu_maquina", "precisao_det",
-                 "precisao_pose", "carga_modelos_s", "detector_ms",
+    md_fields = ["config", "status", "modelo_pose", "execucao", "precisao", "tempo_total",
+                 "cpu_maquina", "carga_modelos_s", "detector_ms",
                  "pose_ms", "inferencia_ms", "inferencia_p95_ms", "fps_inferencia", "fps_pipeline",
                  "pessoas_por_frame", "pose_ms_por_pessoa", "inferencia_1_pessoa_ms", "fps_1_pessoa",
                  "taxa_deteccao_pct", "confianca_media", "nme_pct", "pck_5pct", "eventos",
@@ -270,7 +291,11 @@ def write_reports(rows):
     lines = [
         f"# Comparativo de desempenho ({datetime.now():%Y-%m-%d %H:%M})",
         "",
-        "Tempos de inferência em ms por frame (média após o aquecimento).",
+        "Tempos de inferência em ms por frame (média após o aquecimento). "
+        "tempo_total = tempo total de processamento do vídeo (211 frames), sem a carga dos modelos "
+        "(em segundos na coluna tempo_total_s do CSV). "
+        "precisao = precisão numérica usada (FP32, FP16 ou INT8+FP16); quando detector e pose "
+        "diferem, aparecem os dois.",
         f"Precisão (nme_pct, pck_5pct, eventos): concordância com a referência FP32 `{REFERENCE}`; "
         "nme_pct = erro médio em % do tamanho da pessoa (menor = melhor), "
         "pck_5pct = % de keypoints a menos de 5% do tamanho da pessoa (maior = melhor).",
