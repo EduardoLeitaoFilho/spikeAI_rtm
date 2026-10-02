@@ -92,6 +92,8 @@ class OutputConfig:
     include_skeleton_video: bool
     skeleton_video: Path
     frame_number: FrameNumberConfig
+    # Destaca o atleta no vídeo anotado; as demais pessoas saem esmaecidas
+    highlight_athlete: bool
 
 
 @dataclass(frozen=True)
@@ -290,7 +292,7 @@ def _parse_pose(data: Any, base_dir: Path) -> PoseConfig:
 
     out = _section(data["output"], "pose.output", {
         "dir", "landmarks_csv", "events_json", "run_info", "include_skeleton_video", "skeleton_video",
-    }, optional={"keypoints_json", "frame_number"})
+    }, optional={"keypoints_json", "frame_number", "highlight_athlete"})
     out_dir = _resolve(_str(out["dir"], "pose.output.dir"), base_dir)
     output = OutputConfig(
         dir=out_dir,
@@ -302,6 +304,8 @@ def _parse_pose(data: Any, base_dir: Path) -> PoseConfig:
         include_skeleton_video=_bool(out["include_skeleton_video"], "pose.output.include_skeleton_video"),
         skeleton_video=out_dir / _str(out["skeleton_video"], "pose.output.skeleton_video"),
         frame_number=_frame_number(out.get("frame_number", {}), "pose.output.frame_number"),
+        highlight_athlete=_bool(out.get("highlight_athlete", True),
+                                "pose.output.highlight_athlete"),
     )
 
     return PoseConfig(

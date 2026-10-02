@@ -63,7 +63,7 @@ pose:
     events_json: "events_ambiguous.json"
     run_info: "run_info.json"   # tempos de execução, hardware e estatísticas da execução
     include_skeleton_video: true
-    skeleton_video: "annotated.mp4"
+    skeleton_video: "skeleton.mp4"
     # Número do frame no canto inferior esquerdo do vídeo anotado (opcional)
     frame_number:
       show: true

@@ -40,7 +40,7 @@ pose:
     events_json: "events_ambiguous.json"
     run_info: "run_info.json"
     include_skeleton_video: true
-    skeleton_video: "annotated.mp4"
+    skeleton_video: "skeleton.mp4"
 
   note: "Layout COCO-WholeBody (133 keypoints). Landmarks do MVP (lado direito): right_shoulder=6, right_elbow=8, right_wrist=10, right_hip=12, right_knee=14, right_ankle=16, right_heel=22, right_toe=20 (dedao). Os equivalentes left_* tambem existem. ATENCAO: neste checkpoint a confianca saiu fora de 0-1 (valores entre 4 e 7 num frame de teste), entao os thresholds 0.70/0.40 nao fazem sentido sem normalizar. Mantido sem normalizacao de proposito (ver docs/CANDIDATOS.md)."
 

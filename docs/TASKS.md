@@ -1,4 +1,4 @@
-# Tasks 2, 4, 5 e 6: o que foi feito e como
+# Tasks 2, 4, 5, 6, 7 e 8: o que foi feito e como
 
 Resumo das tasks do pipeline de pose (RTMPose via rtmlib) e de como cada uma foi resolvida.
 Para instalação, veja `docs/ENVIRONMENT.md`. Para as configs candidatas (Task 3), veja `docs/CANDIDATOS.md`.
@@ -12,7 +12,8 @@ run_pose.py --video V --config C.yaml
         ├─ PoseDetector             YOLOX (detector) -> RTMPose, em cada frame
         ├─ CSVExporter              landmarks.csv: todos os pontos do modelo, valores brutos
         ├─ KeypointsJSONExporter    keypoints.json: landmarks padronizados com status (Tasks 5 e 6)
-        └─ run_info.json, events_ambiguous.json, annotated.mp4
+        ├─ skeleton.mp4             vídeo com o esqueleto e o atleta destacado (Task 7)
+        └─ run_info.json, events_ambiguous.json
 ```
 
 | Arquivo | Papel |
@@ -21,8 +22,10 @@ run_pose.py --video V --config C.yaml
 | `src/config.py` | Esquema e leitura do YAML (Task 2) e o Threshold Engine, `ConfidenceThresholds.classify` (Task 5) |
 | `src/keypoint_layouts.py` | Layouts de keypoints (COCO-17, Halpe26, WholeBody) e nomes padronizados (Task 5) |
 | `src/keypoints_export.py` | Geração do `keypoints.json` (Task 6) |
-| `src/main.py` | Pipeline: inferência, desenho, exportação e métricas |
+| `src/main.py` | Pipeline: inferência, desenho (com o destaque do atleta da Task 7), exportação e métricas |
 | `config/pose_config.yaml` | Config principal, comentada |
+| `README.md` | Guia de uso: instalação, execução, YAML e saídas (Task 8) |
+| `teste_desempenho/run_benchmark.py` | Benchmark; num clone novo pula configs com arquivo local ausente (Task 8) |
 
 ---
 
@@ -177,7 +180,52 @@ pose:
 **Outros arquivos de saída** (sem mudança de formato):
 
 - `landmarks.csv`: todos os pontos do modelo (17, 26 ou 133), valores brutos, sem status. Serve para análise e para o `comparar_precisao.py`.
-- `events_ambiguous.json`, `run_info.json`, `annotated.mp4`.
+- `events_ambiguous.json`, `run_info.json`, `skeleton.mp4` (veja a Task 7).
+
+---
+
+## Task 7: vídeo com o esqueleto para inspeção visual
+
+**O que foi feito:**
+
+- **Vídeo renomeado** de `annotated.mp4` para `skeleton.mp4` em todos os YAMLs (principal, candidatos e benchmark). O nome continua configurável em `pose.output.skeleton_video` e o vídeo só é gerado com `pose.output.include_skeleton_video: true`.
+  - No benchmark, o vídeo continua desligado, para não somar o tempo de escrita ao tempo medido.
+  - O `output/annotated.mp4` que já está versionado é de uma execução antiga e não é apagado. A próxima execução gera `output/skeleton.mp4`.
+- **Destaque do atleta**, com a nova opção `pose.output.highlight_athlete` (opcional, padrão `true`):
+  - em cada frame, o atleta é a pessoa com a **maior bounding box**, calculada só com os keypoints que não são `missing` (função `athlete_index` em `src/main.py`);
+  - o atleta é desenhado normalmente (verde = `valid`, laranja = `uncertain`, esqueleto com espessura 2) e **por último**, para ficar por cima das outras pessoas;
+  - as demais pessoas saem **esmaecidas**: cinza, pontos menores e esqueleto com espessura 1;
+  - com `highlight_athlete: false`, todas as pessoas são desenhadas igual, como antes.
+- **O que não muda:** a regra de status da Task 5 continua valendo no vídeo (`missing` não é desenhado), e o número do frame continua no canto inferior esquerdo.
+
+**Decisão: o destaque é só visual.** O `athlete_index` é uma heurística por frame, sem tracking, feita para ajudar quem assiste o vídeo a encontrar o atleta. Ele **não altera os dados exportados**: o `keypoints.json` e o `landmarks.csv` continuam trazendo todas as pessoas. Em frames com alguém mais perto da câmera (árbitro, por exemplo), o destaque pode cair nessa pessoa.
+
+```yaml
+pose:
+  output:
+    include_skeleton_video: true
+    skeleton_video: "skeleton.mp4"
+    highlight_athlete: true   # false: todas as pessoas desenhadas igual
+```
+
+---
+
+## Task 8: documentação de uso e reprodutibilidade
+
+**O que foi feito:**
+
+- **`README.md` na raiz**, o ponto de entrada do projeto:
+  1. **Instalação:** `setup.ps1`, `check_env.py` e quais modelos são baixados e quando.
+  2. **Como executar:** `run_pose.py`, com uma tabela de argumentos e o exemplo de troca de candidato só pelo `--config`.
+  3. **Estrutura do YAML:** exemplo completo e tabela de chaves (obrigatória ou não, com o valor padrão), incluindo as combinações de backend e device.
+  4. **Como o YAML afeta o `keypoints.json`:** regra de status, com um exemplo em que a mesma confiança muda de status só trocando os limiares, e a explicação de layout e nomes padronizados.
+  5. **Onde os resultados são salvos:** árvore da pasta de saída e formato do `keypoints.json`.
+  6. **Limitações conhecidas.**
+  7. **Links para os outros documentos.**
+- **Reprodutibilidade num clone novo**, em `teste_desempenho/run_benchmark.py`:
+  - a config `x_npu` depende de um modelo INT8 gerado localmente (`teste_desempenho/modelos/`, fora do Git). Antes, num clone novo, o `--baixar-modelos` (chamado pelo `setup.ps1`) parava inteiro por causa dela;
+  - a validação do YAML foi separada em `check_config_file(name)`. O download de modelos agora **pula** configs inválidas com aviso (`Pulando x_npu: config inválida: ... (gere o modelo antes: python teste_desempenho/quantizar_int8.py)`) e baixa os demais;
+  - `check(name)` usa a mesma função, então a verificação de dispositivos continua dando o mesmo motivo.
 
 ---
 
@@ -196,9 +244,13 @@ pose:
 | `--video` inexistente | erro claro, nada é executado |
 | Layout errado (candidato A declarado como `coco17`) | para no 1º frame, status `incompatível` |
 | `comparar_precisao.py` nos resultados de 17 pontos que já existem | saída idêntica à versão anterior |
+| Task 7: `run_pose.py` com o candidato A num clipe de 10 frames | `skeleton.mp4` com 10 frames; uma pessoa destacada, as demais em cinza |
+| Task 7: YAMLs sem `highlight_athlete` | carregam com o padrão `true` |
+| Task 8: `check_config_file` nas 9 configs do benchmark | todas válidas |
+| Task 8: clone novo simulado (pasta `modelos/` removida) | `x_npu` volta como inválida, com a dica de gerar o modelo, sem exceção |
 
 ## Limitações conhecidas
 
-- **Seleção do atleta:** ainda não existe. O `keypoints.json` traz todas as pessoas, sem tracking entre frames.
+- **Seleção do atleta:** no vídeo, o atleta é a pessoa de maior bounding box no frame (Task 7). É só visual, sem tracking. O `keypoints.json` traz todas as pessoas, e o `person_index` vale só dentro do frame.
 - **Candidato C:** a confiança sai fora de 0 a 1 (entre 4 e 7). Com os limiares de 0,70/0,40, quase tudo vira `valid`, então o `status` dele não é comparável com os outros candidatos. A diferença foi mantida de propósito (veja `docs/CANDIDATOS.md`).
 - **Limiares:** os valores atuais (0,70/0,40) são arbitrários. Os definitivos vêm do benchmark (Issue #10).

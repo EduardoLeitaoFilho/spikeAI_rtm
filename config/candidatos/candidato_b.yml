@@ -40,7 +40,7 @@ pose:
     events_json: "events_ambiguous.json"
     run_info: "run_info.json"
     include_skeleton_video: true
-    skeleton_video: "annotated.mp4"
+    skeleton_video: "skeleton.mp4"
 
   note: "Layout Halpe26 (26 keypoints). Landmarks do MVP (lado direito): right_shoulder=6, right_elbow=8, right_wrist=10, right_hip=12, right_knee=14, right_ankle=16, right_heel=25, right_toe=21 (dedao). Os equivalentes left_* tambem existem."
 

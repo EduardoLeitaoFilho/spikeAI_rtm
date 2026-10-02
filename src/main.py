@@ -55,6 +55,8 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "pose_config.yaml"
 # Cores (BGR) dos keypoints por classe de confiança
 KPT_COLORS = {"valid": (0, 255, 0), "uncertain": (0, 200, 255)}
 SKELETON_COLOR = (0, 200, 255)
+# Pessoas que não são o atleta, quando pose.output.highlight_athlete é true
+OTHERS_COLOR = (120, 120, 120)
 
 # Raio dos pontos do corpo e dos pontos de detalhe (rosto/mãos no WholeBody)
 KPT_RADIUS = 4
@@ -122,6 +124,28 @@ class KeypointLayoutError(RuntimeError):
     """O modelo devolveu um número de keypoints diferente do layout configurado."""
 
 
+def athlete_index(people_keypoints, thresholds: ConfidenceThresholds):
+    """
+    Índice da pessoa tratada como o atleta no vídeo anotado: a de maior área de
+    bounding box, calculada só com os keypoints que não são 'missing'.
+
+    É uma heurística por frame, sem tracking: serve para a inspeção visual da
+    Task 7, e não para análise. O keypoints.json continua trazendo todas as
+    pessoas, e nada aqui altera os dados exportados.
+    """
+    best, best_area = None, -1.0
+    for i, kpts in enumerate(people_keypoints):
+        visible = [(x, y) for x, y, conf in kpts if thresholds.classify(conf) != "missing"]
+        if len(visible) < 2:
+            continue
+        xs = [p[0] for p in visible]
+        ys = [p[1] for p in visible]
+        area = (max(xs) - min(xs)) * (max(ys) - min(ys))
+        if area > best_area:
+            best, best_area = i, float(area)
+    return best
+
+
 class PoseDetector:
     """
     Carrega o detector de pessoas (YOLOX) e o RTMPose (via rtmlib) e roda a
@@ -132,6 +156,7 @@ class PoseDetector:
     def __init__(self, pose_cfg: PoseConfig):
         self.thresholds: ConfidenceThresholds = pose_cfg.confidence_thresholds
         self.layout: KeypointLayout = pose_cfg.keypoint_layout
+        self.highlight_athlete = pose_cfg.output.highlight_athlete
         self.pose_name = pose_cfg.model
         det_cfg = pose_cfg.detector
         check_runtime(det_cfg.runtime)
@@ -199,15 +224,21 @@ class PoseDetector:
                     [person_xy, person_conf[:, None]], axis=1
                 )  # (K, 3) -> x, y, conf
                 people_keypoints.append(person_kpts)
-                self._draw_person(annotated_frame, person_kpts)
+
+            athlete = athlete_index(people_keypoints, self.thresholds) if self.highlight_athlete else None
+            # O atleta é desenhado por último, para ficar por cima das demais pessoas
+            for i in sorted(range(len(people_keypoints)), key=lambda i: i == athlete):
+                self._draw_person(annotated_frame, people_keypoints[i],
+                                  highlight=(athlete is None or i == athlete))
 
         return annotated_frame, people_keypoints
 
-    def _draw_person(self, frame, person_kpts):
+    def _draw_person(self, frame, person_kpts, highlight=True):
         """
         Desenha os pontos e o esqueleto de uma pessoa no frame.
         Keypoints 'valid' e 'uncertain' são desenhados (com cores diferentes);
         'missing' é omitido, assim como as conexões que dependem dele.
+        Com highlight=False a pessoa sai esmaecida (não é o atleta).
         """
         classes = [self.thresholds.classify(conf) for _, _, conf in person_kpts]
 
@@ -216,13 +247,18 @@ class PoseDetector:
             if cls != "missing":
                 is_detail = detail_start is not None and idx >= detail_start
                 radius = DETAIL_KPT_RADIUS if is_detail else KPT_RADIUS
-                cv2.circle(frame, (int(x), int(y)), radius, KPT_COLORS[cls], -1)
+                if not highlight:
+                    radius = max(1, radius - 2)
+                color = KPT_COLORS[cls] if highlight else OTHERS_COLOR
+                cv2.circle(frame, (int(x), int(y)), radius, color, -1)
 
+        line_color = SKELETON_COLOR if highlight else OTHERS_COLOR
+        thickness = 2 if highlight else 1
         for i, j in self.layout.skeleton:
             if classes[i] != "missing" and classes[j] != "missing":
                 xi, yi, _ = person_kpts[i]
                 xj, yj, _ = person_kpts[j]
-                cv2.line(frame, (int(xi), int(yi)), (int(xj), int(yj)), SKELETON_COLOR, 2)
+                cv2.line(frame, (int(xi), int(yi)), (int(xj), int(yj)), line_color, thickness)
 
 
 # ============================================================

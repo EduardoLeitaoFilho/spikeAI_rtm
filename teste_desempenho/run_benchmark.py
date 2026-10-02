@@ -89,14 +89,20 @@ def available_configs():
     return sorted((p.stem for p in CONFIGS_DIR.glob("*.yaml")), key=_order)
 
 
-def check(name):
-    """Retorna (cfg, None) se o dispositivo está disponível, ou (cfg|None, motivo)."""
-    path = CONFIGS_DIR / f"{name}.yaml"
+def check_config_file(name):
+    """Carrega o YAML de uma config. Retorna (cfg, None) ou (None, motivo) se for inválido."""
     try:
-        cfg = load_config(path, base_dir=PROJECT_ROOT)
+        return load_config(CONFIGS_DIR / f"{name}.yaml", base_dir=PROJECT_ROOT), None
     except ConfigError as e:
         hint = " (gere o modelo antes: python teste_desempenho/quantizar_int8.py)" if "int8" in str(e) else ""
         return None, f"config inválida: {e}{hint}"
+
+
+def check(name):
+    """Retorna (cfg, None) se o dispositivo está disponível, ou (cfg|None, motivo)."""
+    cfg, reason = check_config_file(name)
+    if cfg is None:
+        return None, reason
     try:
         check_runtime(cfg.pose.detector.runtime)
         check_runtime(cfg.pose.runtime)
@@ -137,7 +143,16 @@ def download_models(names):
     from rtmlib.tools.file import download_checkpoint
 
     urls = set()
-    configs = [load_config(CONFIGS_DIR / f"{n}.yaml", base_dir=PROJECT_ROOT) for n in names]
+    configs = []
+    for n in names:
+        # Configs que dependem de um arquivo gerado localmente (ex.: o modelo INT8
+        # do x_npu, criado por quantizar_int8.py) não existem num clone novo:
+        # são puladas aqui em vez de abortar o download dos demais modelos.
+        cfg, reason = check_config_file(n)
+        if cfg is None:
+            print(f"Pulando {n}: {reason}")
+            continue
+        configs.append(cfg)
     for cfg in configs:
         for ckpt in (cfg.pose.checkpoint, cfg.pose.detector.checkpoint):
             if ckpt.startswith(("http://", "https://")):

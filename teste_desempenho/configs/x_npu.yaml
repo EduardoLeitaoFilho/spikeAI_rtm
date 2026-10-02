@@ -39,7 +39,7 @@ pose:
     run_info: "run_info.json"
     # Desligado para não somar escrita de vídeo ao tempo medido
     include_skeleton_video: false
-    skeleton_video: "annotated.mp4"
+    skeleton_video: "skeleton.mp4"
 
 metrics:
   warmup_frames: 5
