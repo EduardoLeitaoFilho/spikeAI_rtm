@@ -1,0 +1,16 @@
+# pip freeze do .venv padrão (setup.ps1 / requirements.txt), Python 3.12.10.
+# No ambiente CUDA, onnxruntime e openvino são substituídos por
+# onnxruntime-gpu[cuda,cudnn]==1.30.0 (ver requirements-cuda.txt).
+colorama==0.4.6
+flatbuffers==25.12.19
+numpy==2.5.3
+onnxruntime==1.30.0
+opencv-contrib-python==5.0.0.93
+opencv-python==5.0.0.93
+openvino==2026.4.0
+openvino-telemetry==2025.2.0
+packaging==26.3
+protobuf==7.36.2
+PyYAML==6.0.3
+rtmlib==0.0.16
+tqdm==4.70.1

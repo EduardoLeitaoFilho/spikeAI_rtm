@@ -1,0 +1,48 @@
+# Candidato a: BodyWithFeet / modo performance (RTMPose-x Halpe26 + YOLOX-x)
+# T3 da Issue #9. Os thresholds sao arbitrarios; os valores reais vem da Issue #10.
+# Mesmo schema de config/pose_config.yaml (validado por src/config.py).
+ 
+input:
+  source: "input/video.mp4"
+  show_preview: false
+ 
+pose:
+  model: "rtmpose_x_halpe26"
+  checkpoint: "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-x_simcc-body7_pt-body7-halpe26_700e-384x288-7fb6e239_20230606.zip"
+ 
+  # RTMPose "384x288" e altura x largura.
+  input_size:
+    width: 288
+    height: 384
+ 
+  # Layout dos keypoints entregues pelo modelo (ver src/keypoint_layouts.py)
+  keypoint_layout: "halpe26"
+
+  detector:
+    model: "yolox_x"
+    checkpoint: "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_x_8xb8-300e_humanart-a39d44ed.zip"
+    input_size:
+      width: 640
+      height: 640
+ 
+  runtime:
+    backend: "onnxruntime"
+    device: "cpu"
+ 
+  confidence_thresholds:
+    valid: 0.70
+    uncertain: 0.40
+ 
+  output:
+    dir: "output/candidato_a_halpe26_x"
+    landmarks_csv: "landmarks.csv"
+    keypoints_json: "keypoints.json"
+    events_json: "events_ambiguous.json"
+    run_info: "run_info.json"
+    include_skeleton_video: true
+    skeleton_video: "annotated.mp4"
+ 
+  note: "Layout Halpe26 (26 keypoints). Landmarks do MVP (lado direito): right_shoulder=6, right_elbow=8, right_wrist=10, right_hip=12, right_knee=14, right_ankle=16, right_heel=25, right_toe=21 (dedao). Os equivalentes left_* tambem existem."
+ 
+metrics:
+  warmup_frames: 5

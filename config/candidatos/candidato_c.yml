@@ -1,0 +1,48 @@
+# Candidato c: Wholebody / modo performance (RTMW-dw-x-l 384x288 + YOLOX-m)
+# T3 da Issue #9. Os thresholds sao arbitrarios; os valores reais vem da Issue #10.
+# Mesmo schema de config/pose_config.yaml (validado por src/config.py).
+
+input:
+  source: "input/video.mp4"
+  show_preview: false
+
+pose:
+  model: "rtmw_dw_x_l_384x288"
+  checkpoint: "https://download.openmmlab.com/mmpose/v1/projects/rtmw/onnx_sdk/rtmw-dw-x-l_simcc-cocktail14_270e-384x288_20231122.zip"
+
+  # RTMPose "384x288" e altura x largura.
+  input_size:
+    width: 288
+    height: 384
+
+  # Layout dos keypoints entregues pelo modelo (ver src/keypoint_layouts.py)
+  keypoint_layout: "coco_wholebody"
+
+  detector:
+    model: "yolox_m"
+    checkpoint: "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_m_8xb8-300e_humanart-c2c7a14a.zip"
+    input_size:
+      width: 640
+      height: 640
+
+  runtime:
+    backend: "onnxruntime"
+    device: "cpu"
+
+  confidence_thresholds:
+    valid: 0.70
+    uncertain: 0.40
+
+  output:
+    dir: "output/candidato_c_wholebody_384"
+    landmarks_csv: "landmarks.csv"
+    keypoints_json: "keypoints.json"
+    events_json: "events_ambiguous.json"
+    run_info: "run_info.json"
+    include_skeleton_video: true
+    skeleton_video: "annotated.mp4"
+
+  note: "Layout COCO-WholeBody (133 keypoints). Landmarks do MVP (lado direito): right_shoulder=6, right_elbow=8, right_wrist=10, right_hip=12, right_knee=14, right_ankle=16, right_heel=22, right_toe=20 (dedao). Os equivalentes left_* tambem existem. ATENCAO: neste checkpoint a confianca saiu fora de 0-1 (valores entre 4 e 7 num frame de teste), entao os thresholds 0.70/0.40 nao fazem sentido sem normalizar. Mantido sem normalizacao de proposito (ver docs/CANDIDATOS.md)."
+
+metrics:
+  warmup_frames: 5

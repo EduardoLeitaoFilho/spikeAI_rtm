@@ -1,7 +1,8 @@
 """
-Pipeline de pose com RTMPose (via rtmlib, backend OpenCV) + OpenCV.
+Pipeline de pose com RTMPose (via rtmlib; backend/dispositivo definidos no YAML) + OpenCV.
 Mesma estrutura do pipeline com YOLO: lê vídeo/webcam, roda inferência
-frame a frame, mostra/salva o vídeo anotado e exporta os keypoints para CSV.
+frame a frame, mostra/salva o vídeo anotado e exporta os keypoints para CSV
+(todos os pontos do modelo) e keypoints.json (landmarks padronizados com status).
 
 Requisitos: ver setup.ps1 / requirements.txt (CPU, NPU, GPU Intel)
 e requirements-cuda.txt (GPU NVIDIA).
@@ -11,8 +12,9 @@ de pose). A rtmlib cuida dessas duas etapas internamente e baixa os modelos
 ONNX automaticamente na primeira execução (fica em cache local depois).
 
 Todo o comportamento (modelos, checkpoints, tamanhos de entrada, limiares e
-saídas) vem do YAML de configuração:
-    python src/main.py --config config/pose_config.yaml
+saídas) vem do YAML de configuração. Comando de execução (raiz do projeto):
+    python run_pose.py --video input/video.mp4 --config config/pose_config.yaml
+--video é opcional e substitui input.source do YAML.
 
 Obs: o backend 'opencv' apresenta bugs de compatibilidade (erro no gather layer)
 com versões recentes do OpenCV DNN nesses modelos ONNX específicos.
@@ -24,6 +26,7 @@ import csv
 import time
 import json
 import argparse
+import dataclasses
 from datetime import datetime
 from pathlib import Path
 
@@ -32,6 +35,8 @@ import numpy as np
 from rtmlib import RTMPose, YOLOX
 
 from config import ConfidenceThresholds, PipelineConfig, PoseConfig, RuntimeConfig, load_config
+from keypoint_layouts import KeypointLayout
+from keypoints_export import KeypointsJSONExporter
 from runtime_check import (
     DeviceUnavailable, check_runtime, describe_runtime, describe_system, prepare_checkpoint,
     runtime_label, verify_active,
@@ -39,8 +44,10 @@ from runtime_check import (
 
 
 # ============================================================
-# CONSTANTES DE FORMATO (COCO-17)
+# CONSTANTES DE DESENHO
 # ============================================================
+# Nomes e esqueleto dos keypoints vêm do layout (src/keypoint_layouts.py),
+# escolhido no YAML em pose.keypoint_layout.
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "pose_config.yaml"
@@ -49,21 +56,45 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "pose_config.yaml"
 KPT_COLORS = {"valid": (0, 255, 0), "uncertain": (0, 200, 255)}
 SKELETON_COLOR = (0, 200, 255)
 
-# Nomes dos 17 keypoints no formato COCO, na ordem retornada pelo RTMPose
-KEYPOINT_NAMES = [
-    "nose", "left_eye", "right_eye", "left_ear", "right_ear",
-    "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
-    "left_wrist", "right_wrist", "left_hip", "right_hip",
-    "left_knee", "right_knee", "left_ankle", "right_ankle",
-]
+# Raio dos pontos do corpo e dos pontos de detalhe (rosto/mãos no WholeBody)
+KPT_RADIUS = 4
+DETAIL_KPT_RADIUS = 2
 
-# Conexões do esqueleto COCO (pares de índices) para desenhar manualmente
-SKELETON_CONNECTIONS = [
-    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),        # braços e ombros
-    (5, 11), (6, 12), (11, 12),                      # tronco
-    (11, 13), (13, 15), (12, 14), (14, 16),          # pernas
-    (0, 1), (0, 2), (1, 3), (2, 4),                  # rosto
-]
+
+# ============================================================
+# OVERLAY DE NÚMERO DO FRAME
+# ============================================================
+
+def draw_frame_number(frame, frame_number: int):
+    """
+    Desenha o número do frame no canto inferior esquerdo da imagem.
+    Usa um fundo preto atrás do texto para garantir legibilidade
+    independente da cor do piso/quadra atrás.
+    """
+    text = str(frame_number)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 1.0
+    thickness = 2
+    margin = 15
+
+    (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+
+    height = frame.shape[0]
+    x = margin
+    y = height - margin  # baseline do texto, próximo ao canto inferior esquerdo
+
+    # Retângulo de fundo para contraste
+    cv2.rectangle(
+        frame,
+        (x - 5, y - text_h - 5),
+        (x + text_w + 5, y + baseline + 5),
+        (0, 0, 0),
+        -1,
+    )
+
+    cv2.putText(
+        frame, text, (x, y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA
+    )
 
 
 # ============================================================
@@ -87,6 +118,10 @@ def _load_model(factory, name: str, runtime: RuntimeConfig):
     return tool
 
 
+class KeypointLayoutError(RuntimeError):
+    """O modelo devolveu um número de keypoints diferente do layout configurado."""
+
+
 class PoseDetector:
     """
     Carrega o detector de pessoas (YOLOX) e o RTMPose (via rtmlib) e roda a
@@ -96,6 +131,8 @@ class PoseDetector:
 
     def __init__(self, pose_cfg: PoseConfig):
         self.thresholds: ConfidenceThresholds = pose_cfg.confidence_thresholds
+        self.layout: KeypointLayout = pose_cfg.keypoint_layout
+        self.pose_name = pose_cfg.model
         det_cfg = pose_cfg.detector
         check_runtime(det_cfg.runtime)
         check_runtime(pose_cfg.runtime)
@@ -130,15 +167,28 @@ class PoseDetector:
         keypoints, scores = self.pose_model(frame, bboxes=bboxes)
         self.det_times_ms.append(det_ms)
         self.pose_times_ms.append((time.perf_counter() - t0) * 1000)
+        self._check_layout(keypoints)
         return keypoints, scores
+
+    def _check_layout(self, keypoints):
+        """Falha se o modelo não entrega o número de keypoints do layout do YAML."""
+        if keypoints is None or len(keypoints) == 0:
+            return
+        n_model = keypoints.shape[1]
+        if n_model != len(self.layout):
+            raise KeypointLayoutError(
+                f"{self.pose_name} devolveu {n_model} keypoints, mas pose.keypoint_layout é "
+                f"'{self.layout.name}' ({len(self.layout)} keypoints). Ajuste o YAML."
+            )
 
     def process_frame(self, frame):
         """
         Roda a inferência em um frame e retorna:
           - annotated_frame: frame com o esqueleto desenhado
-          - people_keypoints: lista de arrays (17, 3) -> (x, y, conf) por pessoa
+          - people_keypoints: lista de arrays (K, 3) -> (x, y, conf) por pessoa,
+            com K = número de keypoints do layout
         """
-        keypoints, scores = self._infer(frame)  # keypoints: (num_pessoas, 17, 2) | scores: (num_pessoas, 17)
+        keypoints, scores = self._infer(frame)  # keypoints: (num_pessoas, K, 2) | scores: (num_pessoas, K)
 
         annotated_frame = frame.copy()
         people_keypoints = []
@@ -147,7 +197,7 @@ class PoseDetector:
             for person_xy, person_conf in zip(keypoints, scores):
                 person_kpts = np.concatenate(
                     [person_xy, person_conf[:, None]], axis=1
-                )  # (17, 3) -> x, y, conf
+                )  # (K, 3) -> x, y, conf
                 people_keypoints.append(person_kpts)
                 self._draw_person(annotated_frame, person_kpts)
 
@@ -157,16 +207,19 @@ class PoseDetector:
         """
         Desenha os pontos e o esqueleto de uma pessoa no frame.
         Keypoints 'valid' e 'uncertain' são desenhados (com cores diferentes);
-        'invalid' é omitido, assim como as conexões que dependem dele.
+        'missing' é omitido, assim como as conexões que dependem dele.
         """
         classes = [self.thresholds.classify(conf) for _, _, conf in person_kpts]
 
-        for (x, y, _), cls in zip(person_kpts, classes):
-            if cls != "invalid":
-                cv2.circle(frame, (int(x), int(y)), 4, KPT_COLORS[cls], -1)
+        detail_start = self.layout.detail_start
+        for idx, ((x, y, _), cls) in enumerate(zip(person_kpts, classes)):
+            if cls != "missing":
+                is_detail = detail_start is not None and idx >= detail_start
+                radius = DETAIL_KPT_RADIUS if is_detail else KPT_RADIUS
+                cv2.circle(frame, (int(x), int(y)), radius, KPT_COLORS[cls], -1)
 
-        for i, j in SKELETON_CONNECTIONS:
-            if classes[i] != "invalid" and classes[j] != "invalid":
+        for i, j in self.layout.skeleton:
+            if classes[i] != "missing" and classes[j] != "missing":
                 xi, yi, _ = person_kpts[i]
                 xj, yj, _ = person_kpts[j]
                 cv2.line(frame, (int(xi), int(yi)), (int(xj), int(yj)), SKELETON_COLOR, 2)
@@ -179,15 +232,16 @@ class PoseDetector:
 class CSVExporter:
     """Acumula os keypoints frame a frame e exporta tudo para CSV ao final."""
 
-    def __init__(self, output_path: str):
+    def __init__(self, output_path: str, layout: KeypointLayout):
         self.output_path = output_path
+        self.layout = layout
         self.rows = []
 
     def add_frame(self, frame_index: int, people_keypoints):
         """Adiciona os keypoints de um frame ao buffer (uma linha por pessoa)."""
         for person_id, kpts in enumerate(people_keypoints):
             row = {"frame": frame_index, "person_id": person_id}
-            for name, (x, y, conf) in zip(KEYPOINT_NAMES, kpts):
+            for name, (x, y, conf) in zip(self.layout.names, kpts):
                 row[f"{name}_x"] = float(x)
                 row[f"{name}_y"] = float(y)
                 row[f"{name}_conf"] = float(conf)
@@ -201,7 +255,7 @@ class CSVExporter:
         os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
 
         fieldnames = ["frame", "person_id"]
-        for name in KEYPOINT_NAMES:
+        for name in self.layout.names:
             fieldnames += [f"{name}_x", f"{name}_y", f"{name}_conf"]
 
         with open(self.output_path, "w", newline="") as f:
@@ -247,7 +301,7 @@ def ankle_confidence(row):
 def ankle_series(rows, thresholds: ConfidenceThresholds):
     """
     Série temporal dos tornozelos da pessoa com mais detecções.
-    Frames com confiança 'invalid' são descartados antes da análise.
+    Frames com confiança 'missing' são descartados antes da análise.
     Retorna (frames, heights, confs) alinhados.
     """
     tracks = get_person_tracks(rows)
@@ -260,7 +314,7 @@ def ankle_series(rows, thresholds: ConfidenceThresholds):
     frames, heights, confs = [], [], []
     for frame, row in ordered:
         conf = ankle_confidence(row)
-        if thresholds.classify(conf) == "invalid":
+        if thresholds.classify(conf) == "missing":
             continue
         frames.append(frame)
         heights.append(ankle_midpoint_y(row))
@@ -332,7 +386,6 @@ def generate_ambiguous_events_from_csv(csv_path: str, json_output: str,
 # ============================================================
 # MAIN
 # ============================================================
-
 def timing_stats(values_ms, warmup_frames: int) -> dict:
     """
     Estatísticas de tempo (ms) ignorando os `warmup_frames` iniciais.
@@ -393,6 +446,8 @@ def base_run_info(cfg: PipelineConfig, args, started_at, detector=None) -> dict:
                 "name": pose_cfg.model,
                 "checkpoint": pose_cfg.checkpoint,
                 "input_size": pose_cfg.input_size.as_tuple(),
+                "keypoint_layout": pose_cfg.keypoint_layout.name,
+                "num_keypoints": len(pose_cfg.keypoint_layout),
             },
             "detector": {
                 "name": det_cfg.model,
@@ -420,12 +475,41 @@ def parse_args():
         default=str(DEFAULT_CONFIG_PATH),
         help=f"Caminho do YAML de configuração (padrão: {DEFAULT_CONFIG_PATH})",
     )
+    parser.add_argument(
+        "--video",
+        help="Vídeo de entrada (ou índice da webcam, ex.: 0). Substitui input.source do YAML.",
+    )
     return parser.parse_args()
+
+
+def override_video(cfg: PipelineConfig, video: str) -> PipelineConfig:
+    """Troca input.source pelo --video (caminho relativo ao diretório atual)."""
+    if video.isdigit():
+        source = int(video)
+    else:
+        path = Path(video).resolve()
+        if not path.is_file():
+            raise SystemExit(f"Vídeo não encontrado: {path}")
+        source = str(path)
+    return dataclasses.replace(cfg, input=dataclasses.replace(cfg.input, source=source))
+
+
+def frame_timestamp_ms(cap, frame_index: int, fps: float) -> float:
+    """
+    Timestamp do frame recém-lido. Em arquivos o OpenCV informa a posição real;
+    em webcam ela pode vir zerada, então usa índice / FPS.
+    """
+    pos_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
+    if pos_ms > 0 or frame_index == 0:
+        return pos_ms
+    return frame_index * 1000.0 / fps
 
 
 def main():
     args = parse_args()
     cfg: PipelineConfig = load_config(args.config, base_dir=PROJECT_ROOT)
+    if args.video is not None:
+        cfg = override_video(cfg, args.video)
     pose_cfg = cfg.pose
     out_cfg = pose_cfg.output
 
@@ -441,7 +525,7 @@ def main():
         print(f"{status.upper()}: {e}")
         raise SystemExit(EXIT_MODEL_UNAVAILABLE)
 
-    exporter = CSVExporter(str(out_cfg.landmarks_csv))
+    exporter = CSVExporter(str(out_cfg.landmarks_csv), pose_cfg.keypoint_layout)
 
     cap = cv2.VideoCapture(cfg.input.source)
     if not cap.isOpened():
@@ -450,6 +534,14 @@ def main():
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    json_exporter = KeypointsJSONExporter(str(out_cfg.keypoints_json), pose_cfg, metadata={
+        "config_file": str(Path(args.config).resolve()),
+        "video": str(cfg.input.source),
+        "fps": fps,
+        "width": width,
+        "height": height,
+    })
 
     writer = None
     if out_cfg.include_skeleton_video:
@@ -465,6 +557,7 @@ def main():
     conf_count = 0
     last_timestamp_ms = 0
     completed = False
+    layout_error = None
     start_time = time.perf_counter()
 
     try:
@@ -475,7 +568,12 @@ def main():
 
             annotated_frame, people_keypoints = detector.process_frame(frame)
 
+            if out_cfg.frame_number.show:
+                draw_frame_number(annotated_frame, frame_index + out_cfg.frame_number.start_at)
+
+            last_timestamp_ms = frame_timestamp_ms(cap, frame_index, fps)
             exporter.add_frame(frame_index, people_keypoints)
+            json_exporter.add_frame(frame_index, last_timestamp_ms, people_keypoints)
 
             if len(people_keypoints) > 0:
                 frames_com_deteccao += 1
@@ -484,8 +582,6 @@ def main():
             for kpts in people_keypoints:
                 conf_sum += float(kpts[:, 2].sum())
                 conf_count += len(kpts)
-
-            last_timestamp_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
 
             if writer is not None:
                 writer.write(annotated_frame)
@@ -499,6 +595,9 @@ def main():
 
         completed = True
 
+    except KeypointLayoutError as e:
+        layout_error = e
+
     finally:
         elapsed_time = time.perf_counter() - start_time
 
@@ -506,7 +605,17 @@ def main():
         if writer is not None:
             writer.release()
         cv2.destroyAllWindows()
+
+        if layout_error is not None:
+            # Erro de configuração: nada foi exportado, registra como falha de carga
+            run_info = base_run_info(cfg, args, started_at, detector)
+            run_info.update({"status": "incompatível", "error": str(layout_error)})
+            write_run_info(out_cfg, run_info)
+            print(f"INCOMPATÍVEL: {layout_error}")
+            raise SystemExit(EXIT_MODEL_UNAVAILABLE)
+
         exporter.save()
+        json_exporter.save()
 
         csv_path = str(out_cfg.landmarks_csv)
         json_path = str(out_cfg.events_json)

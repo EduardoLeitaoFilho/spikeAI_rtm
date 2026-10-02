@@ -9,9 +9,11 @@ cedo com uma mensagem clara em caso de chave ausente, desconhecida ou inválida.
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional, Tuple, Union
 
 import yaml
+
+from keypoint_layouts import DEFAULT_LANDMARKS, KNOWN_LANDMARKS, LAYOUTS, KeypointLayout
 
 
 # Dispositivos aceitos por cada backend da rtmlib.
@@ -61,22 +63,35 @@ class ConfidenceThresholds:
     uncertain: float
 
     def classify(self, conf: float) -> str:
-        """Classifica a confiança de um keypoint em 'valid', 'uncertain' ou 'invalid'."""
+        """
+        Status de um landmark a partir da confiança (Threshold Engine):
+            conf >= valid              -> 'valid'
+            uncertain <= conf < valid  -> 'uncertain'
+            conf < uncertain           -> 'missing'
+        """
         if conf >= self.valid:
             return "valid"
         if conf >= self.uncertain:
             return "uncertain"
-        return "invalid"
+        return "missing"
+
+
+@dataclass(frozen=True)
+class FrameNumberConfig:
+    show: bool      # desenha o número do frame no vídeo anotado
+    start_at: int   # 0 ou 1: número exibido no primeiro frame
 
 
 @dataclass(frozen=True)
 class OutputConfig:
     dir: Path
     landmarks_csv: Path
+    keypoints_json: Path
     events_json: Path
     run_info: Path
     include_skeleton_video: bool
     skeleton_video: Path
+    frame_number: FrameNumberConfig
 
 
 @dataclass(frozen=True)
@@ -88,6 +103,9 @@ class PoseConfig:
     runtime: RuntimeConfig
     confidence_thresholds: ConfidenceThresholds
     output: OutputConfig
+    keypoint_layout: KeypointLayout
+    # Nomes padronizados exportados no keypoints.json, na ordem do YAML
+    landmarks: Tuple[str, ...]
     # Observação livre (opcional), gravada no run_info.json e no comparativo
     note: Optional[str] = None
 
@@ -185,6 +203,35 @@ def _input_size(data: Any, path: str) -> InputSize:
     return InputSize(width=data["width"], height=data["height"])
 
 
+def _frame_number(data: Any, path: str) -> FrameNumberConfig:
+    """Seção opcional; chaves ausentes usam o padrão (mostrar, começando em 1)."""
+    data = _section(data, path, set(), optional={"show", "start_at"})
+    start_at = data.get("start_at", 1)
+    if isinstance(start_at, bool) or start_at not in (0, 1):
+        raise ConfigError(f"'{path}.start_at' deve ser 0 ou 1, recebido: {start_at}")
+    return FrameNumberConfig(
+        show=_bool(data.get("show", True), f"{path}.show"),
+        start_at=start_at,
+    )
+
+
+def _landmarks(value: Any, path: str) -> Tuple[str, ...]:
+    """
+    Lista de nomes padronizados. Cada nome precisa existir em algum layout
+    (pega erro de digitação); se o layout do modelo não o tiver, sai como 'missing'.
+    """
+    if not isinstance(value, list) or not value:
+        raise ConfigError(f"'{path}' deve ser uma lista não vazia de nomes")
+    names = tuple(_str(v, f"{path}[{i}]") for i, v in enumerate(value))
+    unknown = [n for n in names if n not in KNOWN_LANDMARKS]
+    if unknown:
+        raise ConfigError(f"'{path}': landmark(s) desconhecido(s): {unknown}")
+    duplicated = sorted({n for n in names if names.count(n) > 1})
+    if duplicated:
+        raise ConfigError(f"'{path}': landmark(s) repetido(s): {duplicated}")
+    return names
+
+
 def _parse_input(data: Any, base_dir: Path) -> InputConfig:
     data = _section(data, "input", {"source", "show_preview"})
     source = data["source"]
@@ -216,7 +263,7 @@ def _parse_pose(data: Any, base_dir: Path) -> PoseConfig:
     data = _section(data, "pose", {
         "model", "checkpoint", "input_size", "detector",
         "runtime", "confidence_thresholds", "output",
-    }, optional={"note"})
+    }, optional={"keypoint_layout", "landmarks", "note"})
 
     runtime = _runtime(data["runtime"], "pose.runtime")
 
@@ -243,15 +290,18 @@ def _parse_pose(data: Any, base_dir: Path) -> PoseConfig:
 
     out = _section(data["output"], "pose.output", {
         "dir", "landmarks_csv", "events_json", "run_info", "include_skeleton_video", "skeleton_video",
-    })
+    }, optional={"keypoints_json", "frame_number"})
     out_dir = _resolve(_str(out["dir"], "pose.output.dir"), base_dir)
     output = OutputConfig(
         dir=out_dir,
         landmarks_csv=out_dir / _str(out["landmarks_csv"], "pose.output.landmarks_csv"),
+        keypoints_json=out_dir / _str(out.get("keypoints_json", "keypoints.json"),
+                                      "pose.output.keypoints_json"),
         events_json=out_dir / _str(out["events_json"], "pose.output.events_json"),
         run_info=out_dir / _str(out["run_info"], "pose.output.run_info"),
         include_skeleton_video=_bool(out["include_skeleton_video"], "pose.output.include_skeleton_video"),
         skeleton_video=out_dir / _str(out["skeleton_video"], "pose.output.skeleton_video"),
+        frame_number=_frame_number(out.get("frame_number", {}), "pose.output.frame_number"),
     )
 
     return PoseConfig(
@@ -262,6 +312,10 @@ def _parse_pose(data: Any, base_dir: Path) -> PoseConfig:
         runtime=runtime,
         confidence_thresholds=thresholds,
         output=output,
+        # Opcional: sem ele, o modelo é tratado como COCO-17 (RTMPose body)
+        keypoint_layout=LAYOUTS[_choice(data.get("keypoint_layout", "coco17"),
+                                        "pose.keypoint_layout", LAYOUTS)],
+        landmarks=_landmarks(data.get("landmarks", list(DEFAULT_LANDMARKS)), "pose.landmarks"),
         note=_str(data["note"], "pose.note") if "note" in data else None,
     )
 

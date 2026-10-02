@@ -15,6 +15,25 @@ pose:
     width: 288
     height: 384
 
+  # Layout dos keypoints entregues pelo modelo (opcional, padrão coco17):
+  #   coco17 (17, RTMPose body) | halpe26 (26, com pés) | coco_wholebody (133, RTMW)
+  # Precisa bater com o checkpoint: o pipeline confere na 1ª inferência.
+  keypoint_layout: "coco17"
+
+  # Landmarks padronizados exportados no keypoints.json (opcional; padrão: estes 8).
+  # Os nomes são os mesmos para qualquer checkpoint; 'toe' é o dedão.
+  # Se o layout não tiver o ponto (ex.: heel/toe em coco17), sai com status 'missing'
+  # e x, y, confidence = null.
+  landmarks:
+    - right_shoulder
+    - right_elbow
+    - right_wrist
+    - right_hip
+    - right_knee
+    - right_ankle
+    - right_heel
+    - right_toe
+
   # Detector de pessoas (1ª etapa do RTMPose)
   detector:
     model: "yolox_x"
@@ -31,19 +50,24 @@ pose:
     backend: "onnxruntime"
     device: "cpu"
 
-  # O código usará esses valores para gerar o JSON
-  # conf >= valid -> válido | uncertain <= conf < valid -> incerto | abaixo -> inválido
+  # O código usará esses valores para gerar o JSON (status de cada landmark)
+  # conf >= valid -> valid | uncertain <= conf < valid -> uncertain | abaixo -> missing (x, y = null)
   confidence_thresholds:
     valid: 0.70
     uncertain: 0.40
 
   output:
     dir: "output"
-    landmarks_csv: "landmarks.csv"
+    landmarks_csv: "landmarks.csv"       # todos os pontos do modelo, valores brutos
+    keypoints_json: "keypoints.json"     # landmarks padronizados com status (opcional; padrão keypoints.json)
     events_json: "events_ambiguous.json"
     run_info: "run_info.json"   # tempos de execução, hardware e estatísticas da execução
     include_skeleton_video: true
     skeleton_video: "annotated.mp4"
+    # Número do frame no canto inferior esquerdo do vídeo anotado (opcional)
+    frame_number:
+      show: true
+      start_at: 1   # 1 -> frames 1, 2, 3... | 0 -> mesmo índice da coluna 'frame' do CSV
 
 metrics:
   # Frames iniciais fora das estatísticas de tempo (aquecimento de GPU/NPU)
