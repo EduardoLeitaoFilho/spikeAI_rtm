@@ -73,7 +73,7 @@ pose:
     model: "yolox_x"
     checkpoint: "https://.../yolox_x_...zip"
     input_size: {width: 640, height: 640}
-  runtime: {backend: "onnxruntime", device: "cpu"}
+  runtime: {backend: "openvino", device: "cpu"}
   confidence_thresholds: {valid: 0.70, uncertain: 0.40}
   output:
     dir: "output/meu_teste"

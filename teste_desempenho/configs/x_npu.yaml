@@ -37,8 +37,8 @@ pose:
     landmarks_csv: "landmarks.csv"
     events_json: "events_ambiguous.json"
     run_info: "run_info.json"
-    # Desligado para não somar escrita de vídeo ao tempo medido
-    include_skeleton_video: false
+    # Ligado por padrão: a escrita do vídeo entra no tempo de ponta a ponta (fps_pipeline), não na inferência
+    include_skeleton_video: true
     skeleton_video: "skeleton.mp4"
 
 metrics:

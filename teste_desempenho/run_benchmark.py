@@ -81,7 +81,7 @@ def _order(name):
     groups = ("x_", "m_", "hibrido")
     devices = ("cpu", "gpu_intel", "npu", "gpu_cuda")
     group = next((i for i, g in enumerate(groups) if name.startswith(g)), len(groups))
-    device = next((i for i, d in enumerate(devices) if name.endswith(d)), len(devices))
+    device = next((i for i, d in enumerate(devices) if d in name), len(devices))
     return group, device, name
 
 

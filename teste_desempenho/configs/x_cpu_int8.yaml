@@ -1,5 +1,6 @@
-# Teste de desempenho: RTMPose-x em GPU Intel Arc (integrada)
-# Requer GPU Intel. OpenVINO usa FP16 por padrão na GPU.
+# Teste de desempenho: RTMPose-x em CPU via OpenVINO com a pose em INT8 (modelo inteiro)
+# Gere o modelo antes com:
+#   .venv-quant/Scripts/python.exe teste_desempenho/quantizar_int8.py --camadas todas --saida teste_desempenho/modelos/rtmpose-x_int8_total.xml
 # Todas as configs deste diretório usam o mesmo vídeo, detector (YOLOX-x) e limiares.
 # Só mudam o modelo de pose, o dispositivo e a pasta de saída.
 
@@ -9,7 +10,8 @@ input:
 
 pose:
   model: "rtmpose_x"
-  checkpoint: "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-x_simcc-body7_pt-body7_700e-384x288-71d7b7e9_20230629.zip"
+  note: "Pose em INT8 (modelo inteiro, NNCF); detector em FP32. FP16/BF16 não têm suporte nativo nesta CPU"
+  checkpoint: "teste_desempenho/modelos/rtmpose-x_int8_total.xml"
   input_size:
     width: 288
     height: 384
@@ -23,14 +25,14 @@ pose:
 
   runtime:
     backend: "openvino"
-    device: "gpu"
+    device: "cpu"
 
   confidence_thresholds:
     valid: 0.70
     uncertain: 0.40
 
   output:
-    dir: "teste_desempenho/resultados/x_gpu_intel"
+    dir: "teste_desempenho/resultados/x_cpu_int8"
     landmarks_csv: "landmarks.csv"
     events_json: "events_ambiguous.json"
     run_info: "run_info.json"

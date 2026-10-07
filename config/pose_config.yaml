@@ -47,7 +47,7 @@ pose:
   #   openvino    -> cpu | gpu (Intel) | npu (Intel AI Boost)
   #   opencv      -> cpu | cuda
   runtime:
-    backend: "onnxruntime"
+    backend: "openvino"
     device: "cpu"
 
   # O código usará esses valores para gerar o JSON (status de cada landmark)

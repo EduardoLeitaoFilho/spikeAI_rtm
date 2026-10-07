@@ -139,6 +139,27 @@ sobe um pouco (0,668 contra 0,643), mas as posições praticamente não mudam.
 As tentativas descartadas (FP16 puro e o modelo inteiro em INT8), com o
 diagnóstico, estão em `resultados_arquivo/HISTORICO_NPU.md`.
 
+## Execução adaptada na CPU (OpenVINO + INT8)
+
+Testa na CPU a mesma ideia da NPU (modelo quantizado + restante em ponto flutuante).
+Configs: `x_cpu_ov` (OpenVINO FP32, só troca o backend) e `x_cpu_int8` (pose INT8 no
+modelo inteiro). Gere o modelo antes (no `.venv-quant`):
+
+```powershell
+.venv-quant\Scripts\python.exe teste_desempenho\quantizar_int8.py --camadas todas --saida teste_desempenho\modelostmpose-x_int8_total.xml
+```
+
+| Config | Inferência/frame | FPS | NME | PCK 5% |
+|---|---|---|---|---|
+| `x_cpu` (onnxruntime FP32) | 4261 ms | 0,23 | referência | referência |
+| `x_cpu_ov` (OpenVINO FP32) | 2663 ms | 0,38 | 0,00% | 100% |
+| `x_cpu_int8` (pose INT8) | 1362 ms | 0,73 | 2,24% | 92,9% |
+
+- **FP16/BF16 na CPU não ajuda:** esta CPU (Core Ultra 5 225H) não tem FP16/BF16 nativo,
+  e o OpenVINO emula (53 a 76 ms por pessoa, contra 54 ms em FP32 e 29 ms em INT8).
+- **INT8 só na `Conv_323` não acelera a CPU** (53 ms): o ganho vem do modelo inteiro.
+- **INT8 do modelo inteiro é válido na CPU** (o erro de INT8 é específico da NPU).
+
 ## Métricas de precisão
 
 Não há anotação manual do vídeo. Por isso, a precisão é medida como

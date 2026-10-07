@@ -16,6 +16,7 @@ normaliza). Assim a quantização se ajusta aos dados reais.
 Uso (a partir da raiz do projeto, no ambiente .venv-quant):
     python teste_desempenho/quantizar_int8.py                      # só a Conv_323
     python teste_desempenho/quantizar_int8.py --camadas Conv_323/WithoutBiases MatMul_339
+    python teste_desempenho/quantizar_int8.py --camadas todas --saida teste_desempenho/modelos/rtmpose-x_int8_total.xml   # para a CPU
 
 Saída: teste_desempenho/modelos/rtmpose-x_int8.xml (+ .bin), usado por
 configs/x_npu.yaml.
@@ -90,7 +91,10 @@ def main():
     parser.add_argument("--amostras", type=int, default=300, help="Máximo de recortes de pessoas na calibração")
     parser.add_argument("--camadas", nargs="+", default=DEFAULT_LAYERS,
                         help="Nós a quantizar (padrão: %(default)s), ou 'todas' para o modelo inteiro")
+    parser.add_argument("--saida", type=Path, default=OUTPUT_MODEL,
+                        help="Modelo INT8 de saída (padrão: %(default)s)")
     args = parser.parse_args()
+    output_model = args.saida.resolve()
 
     try:
         import nncf
@@ -129,11 +133,11 @@ def main():
     )
     print(f"Quantização concluída em {time.perf_counter() - start:.1f} s")
 
-    OUTPUT_MODEL.parent.mkdir(parents=True, exist_ok=True)
-    ov.save_model(quantized, str(OUTPUT_MODEL), compress_to_fp16=False)
+    output_model.parent.mkdir(parents=True, exist_ok=True)
+    ov.save_model(quantized, str(output_model), compress_to_fp16=False)
     fp32_mb = Path(pose_onnx).stat().st_size / 2**20
-    int8_mb = OUTPUT_MODEL.with_suffix(".bin").stat().st_size / 2**20
-    print(f"Modelo INT8 salvo em: {OUTPUT_MODEL}")
+    int8_mb = output_model.with_suffix(".bin").stat().st_size / 2**20
+    print(f"Modelo INT8 salvo em: {output_model}")
     print(f"Tamanho dos pesos: {fp32_mb:.1f} MB (FP32) -> {int8_mb:.1f} MB (quantizado)")
 
 
