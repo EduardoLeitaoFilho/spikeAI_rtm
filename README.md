@@ -52,6 +52,16 @@ O YAML é validado **antes** de qualquer modelo ser carregado. Se algo estiver e
 uma mensagem que diz qual chave corrigir (por exemplo, `'uncertain' deve ser menor que 'valid'`).
 Um `--video` inexistente também para logo no início.
 
+## 2.1 Executar com Docker (CPU, sem instalar nada)
+
+```bash
+# coloque o vídeo em input/ e rode na raiz do repositório
+docker compose run --rm pose meu_video.mp4
+# resultados em output/meu_video/ (keypoints.json, skeleton.mp4, ...)
+```
+
+Detalhes e problemas comuns em [`docs/DOCKER.md`](docs/DOCKER.md).
+
 ## 3. Estrutura do YAML
 
 Exemplo comentado em [`config/pose_config.yaml`](config/pose_config.yaml). Caminhos relativos são
@@ -187,6 +197,7 @@ Os detalhes de cada campo estão em [`docs/TASKS.md`](docs/TASKS.md).
 
 | Arquivo | Conteúdo |
 |---|---|
+| [`docs/DOCKER.md`](docs/DOCKER.md) | Executar com Docker (CPU) |
 | [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) | Instalação, versões testadas, GPU/NPU |
 | [`docs/TASKS.md`](docs/TASKS.md) | Como as tasks 2, 4, 5, 6, 7 e 8 foram resolvidas |
 | [`docs/CANDIDATOS.md`](docs/CANDIDATOS.md) | Configurações candidatas e seus landmarks |

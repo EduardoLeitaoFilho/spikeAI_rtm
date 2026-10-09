@@ -1,0 +1,16 @@
+# Uso: docker compose run --rm pose meu_video.mp4   (veja docs/DOCKER.md)
+services:
+  pose:
+    build: .
+    image: spikeai-pose:cpu
+    # Grava os arquivos com o seu usuário (no Linux/macOS: export UID GID antes, ou deixe o padrão 1000)
+    user: "${UID:-1000}:${GID:-1000}"
+    environment:
+      - TORCH_HOME=/cache
+    volumes:
+      - ./input:/app/input:ro
+      - ./output:/app/output
+      - rtmlib-cache:/cache
+ 
+volumes:
+  rtmlib-cache:

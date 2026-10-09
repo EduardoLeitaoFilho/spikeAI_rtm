@@ -4,3 +4,9 @@
 __pycache__/
 # modelos gerados (quantizados) pelo teste de desempenho
 teste_desempenho/modelos/
+ 
+# resultados e vídeos locais (Docker)
+output/*
+!output/.gitkeep
+input/*
+!input/.gitkeep

@@ -1,0 +1,53 @@
+# Config usada pelo Docker (CPU): RTMPose-x Halpe26 + YOLOX-x, OpenVINO em FP32.
+# Mesmo modelo do candidato A (config/candidatos/candidato_a.yml); só muda o backend,
+# que passa de onnxruntime para openvino (resultado idêntico ao FP32 de referência, ~2x mais rápido).
+# O vídeo e a pasta de saída são definidos por docker/processar.py; não precisa editar aqui.
+
+input:
+  source: "input/video.mp4"   
+  show_preview: false
+
+pose:
+  model: "rtmpose_x_halpe26"
+  checkpoint: "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-x_simcc-body7_pt-body7-halpe26_700e-384x288-7fb6e239_20230606.zip"
+
+  # RTMPose "384x288" é altura x largura.
+  input_size:
+    width: 288
+    height: 384
+
+  keypoint_layout: "halpe26"
+
+  detector:
+    model: "yolox_x"
+    checkpoint: "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_x_8xb8-300e_humanart-a39d44ed.zip"
+    input_size:
+      width: 640
+      height: 640
+
+  runtime:
+    backend: "openvino"
+    device: "cpu"
+
+  # conf >= valid -> valid | uncertain <= conf < valid -> uncertain | abaixo -> missing (x, y = null)
+  # Valores provisórios; os definitivos vêm da Issue #10.
+  confidence_thresholds:
+    valid: 0.70
+    uncertain: 0.40
+
+  output:
+    dir: "output"               
+    landmarks_csv: "landmarks.csv"
+    keypoints_json: "keypoints.json"
+    events_json: "events_ambiguous.json"
+    run_info: "run_info.json"
+    include_skeleton_video: true
+    skeleton_video: "skeleton.mp4"
+    frame_number:
+      show: true
+      start_at: 1
+
+  note: "Docker/CPU: OpenVINO FP32 (adaptação da execução na NPU). Layout Halpe26: right_heel=25, right_toe=21 (dedão)."
+
+metrics:
+  warmup_frames: 5
